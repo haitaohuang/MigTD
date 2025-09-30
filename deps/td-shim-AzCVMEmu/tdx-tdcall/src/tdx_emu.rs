@@ -13,7 +13,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use lazy_static::lazy_static;
-use log::{error, warn};
+use log::{error, warn, info};
 // Use interrupt-emu to fire callbacks registered by upper layers.
 use interrupt_emu as intr;
 use original_tdx_tdcall::{TdCallError, TdVmcallError};

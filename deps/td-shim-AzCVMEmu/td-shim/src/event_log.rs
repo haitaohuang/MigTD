@@ -184,7 +184,7 @@ impl<T> MockOnce<T> {
 }
 
 // Define the size of the event log buffer as a constant for better maintainability
-pub const EVENT_LOG_BUFFER_SIZE: usize = 32768; // Buffer size 32768 (32KB)
+pub const EVENT_LOG_BUFFER_SIZE: usize = 1048576; // Buffer size 1048576 (1MB) - increased to handle large v2 policies
 
 pub struct EventLogEmulator {
     data: [u8; EVENT_LOG_BUFFER_SIZE], // Fixed size buffer defined by constant
