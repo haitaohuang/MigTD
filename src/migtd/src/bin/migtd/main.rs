@@ -12,6 +12,8 @@ use core::task::Poll;
 
 #[cfg(feature = "vmcall-raw")]
 use alloc::vec::Vec;
+#[cfg(feature = "AzCVMEmu")]
+use crypto;
 use log::info;
 use migtd::event_log::*;
 #[cfg(not(feature = "vmcall-raw"))]
@@ -107,9 +109,37 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
     // Read migration policy from CFV
     let policy = config::get_policy().expect("Fail to get policy from CFV\n");
 
-    // Measure and extend the migration policy to RTMR
-    event_log::write_tagged_event_log(event_log, MR_INDEX_POLICY, TAGGED_EVENT_ID_POLICY, policy)
+    #[cfg(feature = "AzCVMEmu")]
+    {
+        // In AzCVMEmu mode, store only a hash of the policy to keep event log small
+        log::info!(
+            "AzCVMEmu mode: Storing hash-only policy event, original_size={}",
+            policy.len()
+        );
+
+        let hash = crypto::hash::digest_sha384(policy).expect("Failed hash policy data");
+        // Measure and extend the policy hash to RTMR
+        event_log::write_tagged_event_log(
+            event_log,
+            MR_INDEX_POLICY,
+            TAGGED_EVENT_ID_POLICY,
+            hash.as_slice(),
+        )
         .expect("Failed to log migration policy");
+    }
+
+    #[cfg(not(feature = "AzCVMEmu"))]
+    {
+        // In production mode, store the full policy as before
+        // Measure and extend the migration policy to RTMR
+        event_log::write_tagged_event_log(
+            event_log,
+            MR_INDEX_POLICY,
+            TAGGED_EVENT_ID_POLICY,
+            policy,
+        )
+        .expect("Failed to log migration policy");
+    }
 }
 
 #[cfg(feature = "policy_v2")]
