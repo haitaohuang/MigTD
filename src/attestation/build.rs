@@ -65,6 +65,9 @@ fn main() {
         assert!(status.success(), "failed to run fixup script: {status}");
         println!("cargo:rustc-link-arg=-lservtd_attest_app");
         println!("cargo:rustc-link-arg=-lcrypto");
+        // OpenSSL's static libcrypto.a requires symbols from libc like atexit
+        // When linking with -nodefaultlibs, we need to explicitly link libc
+        println!("cargo:rustc-link-arg=-lc");
     }
     #[cfg(not(feature = "AzCVMEmu"))]
     println!("cargo:rustc-link-lib=static=servtd_attest");

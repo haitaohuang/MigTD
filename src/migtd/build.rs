@@ -10,5 +10,8 @@ fn main() {
     {
         println!("cargo:rustc-link-arg=-lservtd_attest_app");
         println!("cargo:rustc-link-arg=-lcrypto");
+        // OpenSSL's static libcrypto.a requires symbols from libc like atexit
+        // When linking with -nodefaultlibs, we need to explicitly link libc
+        println!("cargo:rustc-link-arg=-lc");
     }
 }
