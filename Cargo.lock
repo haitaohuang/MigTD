@@ -172,6 +172,26 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "az-cvm-vtpm"
 version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b3d0900c6757c9674b05b0479236458297026e25fb505186dc8d7735091a21c"
+dependencies = [
+ "bincode",
+ "jsonwebkey",
+ "memoffset",
+ "openssl",
+ "serde",
+ "serde-big-array",
+ "serde_json",
+ "sev",
+ "sha2",
+ "thiserror 2.0.17",
+ "tss-esapi",
+ "zerocopy 0.8.27",
+]
+
+[[package]]
+name = "az-cvm-vtpm"
+version = "0.7.4"
 source = "git+https://github.com/kinvolk/azure-cvm-tooling#29ef1581561e85a3a2313f80c738aabe064c4bc4"
 dependencies = [
  "bincode",
@@ -191,9 +211,25 @@ dependencies = [
 [[package]]
 name = "az-tdx-vtpm"
 version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04849677b3c0704d4593d89940cde0dc0caad2202bf9fb29352e153782b91ff8"
+dependencies = [
+ "az-cvm-vtpm 0.7.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "base64-url",
+ "bincode",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "ureq",
+ "zerocopy 0.8.27",
+]
+
+[[package]]
+name = "az-tdx-vtpm"
+version = "0.7.4"
 source = "git+https://github.com/kinvolk/azure-cvm-tooling#29ef1581561e85a3a2313f80c738aabe064c4bc4"
 dependencies = [
- "az-cvm-vtpm",
+ "az-cvm-vtpm 0.7.4 (git+https://github.com/kinvolk/azure-cvm-tooling)",
  "base64-url",
  "bincode",
  "serde",
@@ -638,6 +674,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "env_filter"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "186e05a59d4c50738528153b83b0b0194d3a29507dfec16eccd4b342903397d0"
+dependencies = [
+ "log",
+ "regex",
+]
+
+[[package]]
 name = "env_logger"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -648,6 +694,19 @@ dependencies = [
  "log",
  "regex",
  "termcolor",
+]
+
+[[package]]
+name = "env_logger"
+version = "0.11.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c863f0904021b108aa8b2f55046443e6b1ebde8fd4a15c399893aae4fa069f"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "env_filter",
+ "jiff",
+ "log",
 ]
 
 [[package]]
@@ -984,6 +1043,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
+name = "jiff"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be1f93b8b1eb69c77f24bbb0afdf66f54b632ee39af40ca21c4365a1d7347e49"
+dependencies = [
+ "jiff-static",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde",
+]
+
+[[package]]
+name = "jiff-static"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03343451ff899767262ec32146f6d559dd759fdadf42ff0e227c7c48f72594b4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1132,7 +1215,7 @@ dependencies = [
  "cc-measurement",
  "chrono",
  "crypto",
- "env_logger",
+ "env_logger 0.10.2",
  "futures-util",
  "lazy_static",
  "log",
@@ -1213,6 +1296,21 @@ dependencies = [
  "policy",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "migtd-quote-extractor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "az-tdx-vtpm 0.7.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clap",
+ "env_logger 0.11.8",
+ "hex",
+ "log",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1491,6 +1589,21 @@ dependencies = [
  "serde_json",
  "td-shim",
  "td-shim-interface",
+]
+
+[[package]]
+name = "portable-atomic"
+version = "1.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
+
+[[package]]
+name = "portable-atomic-util"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8a2f0d8d040d7848a709caf78912debcc3f33ee4b3cac47d73d1e1069e83507"
+dependencies = [
+ "portable-atomic",
 ]
 
 [[package]]
@@ -2148,7 +2261,7 @@ dependencies = [
  "byteorder",
  "cfg-if",
  "clap",
- "env_logger",
+ "env_logger 0.10.2",
  "hex",
  "igvm",
  "igvm_defs",
@@ -2183,7 +2296,7 @@ dependencies = [
 name = "tdx-tdcall-emu"
 version = "0.1.0"
 dependencies = [
- "az-tdx-vtpm",
+ "az-tdx-vtpm 0.7.4 (git+https://github.com/kinvolk/azure-cvm-tooling)",
  "bitflags 2.9.4",
  "interrupt-emu",
  "lazy_static",
