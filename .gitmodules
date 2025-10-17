@@ -1,6 +1,7 @@
 [submodule "deps/linux-sgx"]
 	path = deps/linux-sgx
 	url = https://github.com/intel/linux-sgx.git
+	branch = migtd_2.26
 [submodule "deps/td-shim"]
 	path = deps/td-shim
 	url = https://github.com/confidential-containers/td-shim
