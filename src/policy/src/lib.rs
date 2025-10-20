@@ -25,6 +25,7 @@ use td_shim::event_log::{
     PLATFORM_CONFIG_SECURE_AUTHORITY, PLATFORM_CONFIG_SVN, PLATFORM_FIRMWARE_BLOB2_PAYLOAD,
 };
 
+// Known minimum size of report data we care about
 pub const REPORT_DATA_SIZE: usize = 734;
 const MAX_RTMR_INDEX: usize = 3;
 const EV_EVENT_TAG: u32 = 0x00000006;
@@ -98,7 +99,7 @@ impl<'a> Report<'a> {
     const R_QE_ISV_SVN: Range<usize> = 732..734;
 
     pub fn new(report: &'a [u8]) -> Result<Self, PolicyError> {
-        if report.len() != REPORT_DATA_SIZE {
+        if report.len() < REPORT_DATA_SIZE {
             return Err(PolicyError::InvalidParameter);
         }
 

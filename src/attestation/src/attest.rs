@@ -182,7 +182,7 @@ pub fn verify_quote(quote: &[u8]) -> Result<Vec<u8>, Error> {
         }
     }
 
-    if report_verify_size as usize != TD_VERIFIED_REPORT_SIZE {
+    if (report_verify_size as usize) < TD_VERIFIED_REPORT_SIZE {
         return Err(Error::InvalidOutput);
     }
 

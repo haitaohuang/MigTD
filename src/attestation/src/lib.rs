@@ -22,6 +22,7 @@ pub mod root_ca;
 
 pub use attest::*;
 
+// Known minimum size of verified TD report
 pub const TD_VERIFIED_REPORT_SIZE: usize = 734;
 
 #[derive(Debug)]
