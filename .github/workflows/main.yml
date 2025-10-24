@@ -34,7 +34,7 @@ jobs:
         with:
           version: "10.0"
           directory: ${{ runner.temp }}/llvm
-      
+
       - name: Install libtinfo5
         run: sudo apt-get update -y && sudo apt-get install libtinfo5 -y
 
@@ -59,7 +59,7 @@ jobs:
 
       - name: Add `x86_64-unknown-none` target
         run: rustup target add x86_64-unknown-none
-        
+
       - name: Preparation Work
         run: bash sh_script/preparation.sh
 
@@ -83,4 +83,3 @@ jobs:
             BUILD_CMD="$BUILD_CMD --debug"
           fi
           $BUILD_CMD
-          
