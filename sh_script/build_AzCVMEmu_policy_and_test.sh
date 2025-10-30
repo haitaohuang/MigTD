@@ -10,13 +10,13 @@
 #
 # Features:
 #   - Extracts TD measurements from Azure vTPM (MRTD, RTMRs, XFAM, Attributes)
-#   - OR generates mock measurements for testing with skip-ra
+#   - OR generates mock measurements for testing with test_mock_report feature
 #   - Updates policy templates with extracted measurements
 #   - Generates certificate chain for signing
 #   - Signs all components (td_identity, tcb_mapping, final policy)
 #   - Creates test-ready signed policy
 #   - Optionally tests the generated policy with migtdemu.sh
-#   - Supports skip-ra mode for testing
+#   - Supports mock report mode for testing
 #
 # Prerequisites:
 #   - For real mode: Azure TDX CVM with vTPM access, sudo privileges
@@ -28,7 +28,7 @@
 #   # Real mode: extract measurements from vTPM and generate signed policy
 #   ./sh_script/build_AzCVMEmu_policy_and_test.sh
 #
-#   # Mock mode: generate policy from predictable test data (uses skip-ra)
+#   # Mock mode: generate policy from predictable test data (uses test_mock_report)
 #   ./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report
 #
 #   # Skip the integration test at the end
@@ -54,7 +54,7 @@
 #   10. Signs final policy with policy signing key
 #   11. Copies certificate chain to output directory
 #   12. Securely deletes private key with shred
-#   13. Optionally tests with ./migtdemu.sh (with skip-ra for mock data)
+#   13. Optionally tests with ./migtdemu.sh (with --mock-report for mock data)
 #
 # Outputs:
 #   - config/AzCVMEmu/policy_v2_signed.json (196 KB) - Signed policy with your measurements
@@ -226,14 +226,14 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --output-dir DIR             Output directory for generated files (default: config/AzCVMEmu)"
             echo "  --skip-test                  Skip running the MigTD test at the end"
-            echo "  --mock-report                Use mock report data and skip-ra mode for testing"
+            echo "  --mock-report                Use mock report data with test_mock_report feature"
             echo "  -h, --help                   Show this help message"
             echo
             echo "Examples:"
             echo "  # Real vTPM mode (normal remote attestation):"
             echo "  $0"
             echo
-            echo "  # Mock mode for testing (uses skip-ra automatically):"
+            echo "  # Mock report mode (uses test_mock_report feature):"
             echo "  $0 --mock-report"
             echo
             echo "  # Generate policy but skip test:"
@@ -309,7 +309,7 @@ cd "$TEMP_DIR"
 
 if [ "$USE_MOCK_REPORT" = true ]; then
     echo "Using mock report data for testing..."
-    echo -e "${YELLOW}Note: Will use skip-ra mode for testing${NC}"
+    echo -e "${YELLOW}Note: Will use test_mock_report feature for building${NC}"
     "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/release/azcvm-extract-report" \
         --mock-report \
         --output-json "migtd_report_data.json"
@@ -503,7 +503,7 @@ if [ "$USE_MOCK_REPORT" = true ]; then
     echo "  MRTD: ${MRTD:0:64}..."
     echo "  RTMR0: ${RTMR0:0:64}..."
     echo "  RTMR1: ${RTMR1:0:64}..."
-    echo -e "${YELLOW}  Note: This policy will be tested with skip-ra mode${NC}"
+    echo -e "${YELLOW}  Note: This policy will be tested with test_mock_report feature${NC}"
 else
     echo "Policy contains measurements extracted from live vTPM report:"
     echo "  MRTD: ${MRTD:0:64}..."
@@ -522,9 +522,9 @@ if [ -z "$SKIP_TEST" ]; then
     TEST_CMD="./migtdemu.sh --policy-v2 --policy-file $OUTPUT_POLICY --policy-issuer-chain-file $OUTPUT_CERT_CHAIN --debug --both"
 
     if [ "$USE_MOCK_REPORT" = true ]; then
-        TEST_CMD="$TEST_CMD --skip-ra"
-        echo "Running with skip-ra mode (mock data): $TEST_CMD"
-        echo -e "${YELLOW}Note: Remote attestation will be bypassed for mock data testing${NC}"
+        TEST_CMD="$TEST_CMD --mock-report"
+        echo "Running with mock report mode: $TEST_CMD"
+        echo -e "${YELLOW}Note: Using test_mock_report feature for mock TD reports/quotes${NC}"
     else
         echo "Running with real remote attestation: $TEST_CMD"
     fi
@@ -545,7 +545,7 @@ else
     echo -e "${YELLOW}Test skipped. To test manually, run:${NC}"
     TEST_CMD="./migtdemu.sh --policy-v2 --policy-file $OUTPUT_POLICY --policy-issuer-chain-file $OUTPUT_CERT_CHAIN --debug --both"
     if [ "$USE_MOCK_REPORT" = true ]; then
-        TEST_CMD="$TEST_CMD --skip-ra"
+        TEST_CMD="$TEST_CMD --mock-report"
     fi
     echo "  $TEST_CMD"
 fi
