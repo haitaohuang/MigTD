@@ -68,8 +68,9 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 
 fn get_td_report_from_vtpm(report_data: Option<&[u8; 48]>, use_mock: bool) -> Result<tdx::TdReport> {
     if use_mock {
-        log::info!("Generating mock TD report for skip-ra-and-accept-all mode");
-        return get_mock_td_report(report_data);
+        // Use the existing create_mock_td_report function from tdx-tdcall-emu
+        use tdx_tdcall_emu::tdreport_emu::create_mock_td_report;
+        Ok(create_mock_td_report())
     }
 
     log::info!("Getting TD report from vTPM using tdcall_report_emulated");
@@ -117,21 +118,6 @@ fn extract_report_data(td_report: &tdx::TdReport) -> Result<ReportData> {
     log::info!("      Azure CVM reports don't contain MigTD-specific RTMRs");
 
     Ok(data)
-}
-
-/// Generate a mock TD report for testing with skip-ra-and-accept-all mode
-fn get_mock_td_report(report_data: Option<&[u8; 48]>) -> Result<tdx::TdReport> {
-    log::info!("Creating mock TD report for skip-ra-and-accept-all testing");
-
-    let default_report_data = [0u8; 48];
-    let data = report_data.unwrap_or(&default_report_data);
-
-    let mut report_data_64 = [0u8; 64];
-    report_data_64[..48].copy_from_slice(data);
-
-    // Use the existing create_mock_td_report function from tdx-tdcall-emu
-    use tdx_tdcall_emu::tdreport_emu::create_mock_td_report;
-    Ok(create_mock_td_report(&report_data_64))
 }
 
 fn main() -> Result<()> {
