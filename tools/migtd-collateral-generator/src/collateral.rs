@@ -6,12 +6,10 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use x509_parser::prelude::*;
 
-use crate::pcs_client::{
-    fetch_data_from_url, fetch_pck_crl, fetch_qe_identity, fetch_root_ca, get_platform_tcb_list,
-    PlatformTcbRaw,
-};
+use crate::http_client::fetch_data_from_url;
+use crate::provider::{CollateralServiceProvider, PlatformTcbRaw};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Collaterals {
     major_version: u16,
@@ -21,15 +19,15 @@ pub struct Collaterals {
     pck_crl_issuer_chain: String,
     root_ca_crl: String,
     pck_crl: String,
-    platforms: Vec<Platform>,
+    pub platforms: Vec<Platform>,
     qe_identity_issuer_chain: String,
     qe_identity: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Platform {
-    fmspc: String,
+    pub fmspc: String,
     tcb_info_issuer_chain: String,
     tcb_info: String,
 }
@@ -80,13 +78,13 @@ impl Collaterals {
     }
 }
 
-pub fn get_collateral(for_production: bool) -> Result<Collaterals> {
-    let (qe_identity, qe_identity_issuer_chain) = fetch_qe_identity(for_production)?;
+pub fn get_collateral(provider: &dyn CollateralServiceProvider) -> Result<Collaterals> {
+    let (qe_identity, qe_identity_issuer_chain) = provider.fetch_qe_identity()?;
     let root_ca_crl_url = get_root_ca_crl_url(qe_identity_issuer_chain.as_str())?;
     let root_ca_crl = fetch_data_from_url(&root_ca_crl_url)?.data;
-    let root_ca = fetch_root_ca(for_production)?;
-    let (pck_crl, pck_crl_issuer_chain) = fetch_pck_crl(for_production)?;
-    let platform_tcb_list = get_platform_tcb_list(for_production)?;
+    let root_ca = provider.fetch_root_ca()?;
+    let (pck_crl, pck_crl_issuer_chain) = provider.fetch_pck_crl()?;
+    let platform_tcb_list = provider.get_platform_tcb_list()?;
     let mut collaterals = Collaterals::new(
         root_ca,
         pck_crl_issuer_chain,
