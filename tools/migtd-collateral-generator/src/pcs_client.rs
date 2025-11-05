@@ -2,11 +2,16 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+// This module contains legacy PCS client functionality.
+// New code should use the provider system in provider/ module.
+
+#![allow(dead_code)]
+
 use anyhow::{anyhow, Result};
-use curl::easy::Easy;
 use percent_encoding::percent_decode_str;
-use serde::Deserialize;
-use std::collections::HashMap;
+
+// Re-export from http_client
+pub use crate::http_client::{fetch_data_from_url, PcsResponse};
 
 const PCS_PROD_URL: &str = "https://api.trustedservices.intel.com/";
 const PCS_SBX_URL: &str = "https://sbx.api.trustedservices.intel.com/";
@@ -46,6 +51,7 @@ impl PcsRequest {
     }
 }
 
+// Legacy functions - use provider system instead
 pub fn fetch_pck_crl(for_production: bool) -> Result<(Vec<u8>, String)> {
     let mut req = PcsRequest::new(for_production, "sgx/certification/v4/pckcrl");
     req.add_param("ca", "platform");
@@ -126,23 +132,17 @@ pub fn fetch_qe_identity(for_production: bool) -> Result<(Vec<u8>, String)> {
     }
 }
 
-pub struct PlatformTcbRaw {
-    pub fmspc: String,
-    pub tcb: Vec<u8>,
-    pub tcb_issuer_chain: String,
-}
-
-pub fn get_platform_tcb_list(for_production: bool) -> Result<Vec<PlatformTcbRaw>> {
+pub fn get_platform_tcb_list(for_production: bool) -> Result<Vec<crate::provider::PlatformTcbRaw>> {
     let fmspc_list = fetch_fmspc_list(for_production)?;
     let mut platform_tcb_list = Vec::new();
     for platform in get_tdx_supported_platforms(&fmspc_list) {
-        let _ = fetch_platform_tcb(for_production, &platform.fmspc)?.map(|raw_tcb| {
-            platform_tcb_list.push(PlatformTcbRaw {
+        if let Some(raw_tcb) = fetch_platform_tcb(for_production, &platform.fmspc)? {
+            platform_tcb_list.push(crate::provider::PlatformTcbRaw {
                 fmspc: platform.fmspc.clone(),
                 tcb: raw_tcb.0,
                 tcb_issuer_chain: raw_tcb.1,
             });
-        });
+        }
     }
     Ok(platform_tcb_list)
 }
@@ -153,7 +153,7 @@ pub fn fetch_platform_tcb(for_production: bool, fmspc: &str) -> Result<Option<(V
     let mut pcs_response = fetch_data_from_url(req.as_str())?;
 
     let result = if pcs_response.response_code == 200 {
-        println!("Got TCB info of fmspc - {}", fmspc,);
+        println!("Got TCB info of fmspc - {}", fmspc);
         let issuer_chain = pcs_response
             .header_map
             .remove(TCB_INFO_ISSUER_CHAIN)
@@ -176,57 +176,13 @@ pub fn fetch_platform_tcb(for_production: bool, fmspc: &str) -> Result<Option<(V
     Ok(result)
 }
 
-pub struct PcsResponse {
-    pub response_code: u32,
-    pub header_map: HashMap<String, String>,
-    pub data: Vec<u8>,
-}
-
-pub fn fetch_data_from_url(url: &str) -> Result<PcsResponse> {
-    let mut handle = Easy::new();
-    let mut data = Vec::new();
-    let mut http_header = Vec::new();
-
-    handle.url(url)?;
-    {
-        let mut transfer = handle.transfer();
-        transfer.header_function(|header_bytes| {
-            http_header.extend_from_slice(header_bytes);
-            true
-        })?;
-        transfer.write_function(|new_data| {
-            data.extend_from_slice(new_data);
-            Ok(new_data.len())
-        })?;
-        transfer.perform()?;
-    }
-
-    Ok(PcsResponse {
-        response_code: handle.response_code()?,
-        header_map: parse_http_headers(http_header)?,
-        data,
-    })
-}
-
-// Converts raw HTTP header bytes to a key-value map.
-fn parse_http_headers(header_bytes: Vec<u8>) -> Result<HashMap<String, String>> {
-    let mut headers = HashMap::new();
-    let header_str = String::from_utf8(header_bytes)?;
-
-    for line in header_str.lines() {
-        if let Some((key, value)) = line.split_once(": ") {
-            headers.insert(key.trim().to_string(), value.trim().to_string());
-        }
-    }
-
-    Ok(headers)
-}
-
-pub fn fetch_fmspc_list(for_production: bool) -> Result<Vec<Fmspc>> {
+pub fn fetch_fmspc_list(for_production: bool) -> Result<Vec<crate::provider::Fmspc>> {
     let req = PcsRequest::new(for_production, "sgx/certification/v4/fmspcs");
     let pcs_response = fetch_data_from_url(req.as_str())?;
     match pcs_response.response_code {
-        200 => Ok(serde_json::from_slice::<Vec<Fmspc>>(&pcs_response.data)?),
+        200 => Ok(serde_json::from_slice::<Vec<crate::provider::Fmspc>>(
+            &pcs_response.data,
+        )?),
         _ => {
             eprintln!(
                 "Error fetching fmspc list - {:?}",
@@ -237,19 +193,8 @@ pub fn fetch_fmspc_list(for_production: bool) -> Result<Vec<Fmspc>> {
     }
 }
 
-pub fn get_tdx_supported_platforms(list: &[Fmspc]) -> Vec<&Fmspc> {
+pub fn get_tdx_supported_platforms(
+    list: &[crate::provider::Fmspc],
+) -> Vec<&crate::provider::Fmspc> {
     list.iter().filter(|p| p.is_tdx_supported()).collect()
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Fmspc {
-    pub fmspc: String,
-    platform: String,
-}
-
-impl Fmspc {
-    pub fn is_tdx_supported(&self) -> bool {
-        // only E5 support TDX at this moment.
-        self.platform.as_str() == "E5"
-    }
 }

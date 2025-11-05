@@ -3,15 +3,14 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use anyhow::{anyhow, Result};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use x509_parser::prelude::*;
 
-use crate::pcs_client::{
-    fetch_data_from_url, fetch_pck_crl, fetch_qe_identity, fetch_root_ca, get_platform_tcb_list,
-    PlatformTcbRaw,
-};
+use crate::http_client::fetch_data_from_url;
+use crate::provider::{CollateralServiceProvider, PlatformTcbRaw};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Collaterals {
     major_version: u16,
@@ -21,20 +20,25 @@ pub struct Collaterals {
     pck_crl_issuer_chain: String,
     root_ca_crl: String,
     pck_crl: String,
-    platforms: Vec<Platform>,
+    pub platforms: Vec<Platform>,
     qe_identity_issuer_chain: String,
     qe_identity: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Platform {
-    fmspc: String,
+    pub fmspc: String,
     tcb_info_issuer_chain: String,
     tcb_info: String,
 }
 
 impl Collaterals {
+    /// Default version values for new collaterals
+    const MAJOR_VERSION: u16 = 1;
+    const MINOR_VERSION: u16 = 0;
+    const TEE_TYPE: u32 = 0x81;
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         root_ca: Vec<u8>,
@@ -54,9 +58,9 @@ impl Collaterals {
             .map_err(|e| anyhow!("Invalid UTF-8 in QE identity: {}", e))?;
 
         Ok(Collaterals {
-            major_version: 1,
-            minor_version: 0,
-            tee_type: 0x81,
+            major_version: Self::MAJOR_VERSION,
+            minor_version: Self::MINOR_VERSION,
+            tee_type: Self::TEE_TYPE,
             root_ca,
             pck_crl_issuer_chain,
             root_ca_crl,
@@ -80,13 +84,13 @@ impl Collaterals {
     }
 }
 
-pub fn get_collateral(for_production: bool) -> Result<Collaterals> {
-    let (qe_identity, qe_identity_issuer_chain) = fetch_qe_identity(for_production)?;
+pub fn get_collateral(provider: &dyn CollateralServiceProvider) -> Result<Collaterals> {
+    let (qe_identity, qe_identity_issuer_chain) = provider.fetch_qe_identity()?;
     let root_ca_crl_url = get_root_ca_crl_url(qe_identity_issuer_chain.as_str())?;
     let root_ca_crl = fetch_data_from_url(&root_ca_crl_url)?.data;
-    let root_ca = fetch_root_ca(for_production)?;
-    let (pck_crl, pck_crl_issuer_chain) = fetch_pck_crl(for_production)?;
-    let platform_tcb_list = get_platform_tcb_list(for_production)?;
+    let root_ca = provider.fetch_root_ca()?;
+    let (pck_crl, pck_crl_issuer_chain) = provider.fetch_pck_crl()?;
+    let platform_tcb_list = provider.get_platform_tcb_list()?;
     let mut collaterals = Collaterals::new(
         root_ca,
         pck_crl_issuer_chain,
@@ -199,7 +203,7 @@ fn crl_urls_from_pem(pem_cert: &str) -> Result<Vec<String>> {
 
 // Convert DER bytes to PEM format string
 fn der_to_pem(der_bytes: &[u8], label: &str) -> String {
-    let base64_encoded = base64_encode(der_bytes);
+    let base64_encoded = base64::engine::general_purpose::STANDARD.encode(der_bytes);
 
     // Split into 64-character lines as per PEM standard
     let mut lines = Vec::new();
@@ -213,41 +217,4 @@ fn der_to_pem(der_bytes: &[u8], label: &str) -> String {
         lines.join("\n"),
         label
     )
-}
-
-// Base64 encoding implementation (RFC 4648)
-fn base64_encode(input: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    let mut result = String::new();
-    let mut i = 0;
-
-    while i < input.len() {
-        let b1 = input[i];
-        let b2 = if i + 1 < input.len() { input[i + 1] } else { 0 };
-        let b3 = if i + 2 < input.len() { input[i + 2] } else { 0 };
-
-        // Combine 3 bytes into 24-bit bitmap
-        let bitmap = ((b1 as u32) << 16) | ((b2 as u32) << 8) | (b3 as u32);
-
-        // Extract 6-bit chunks and convert to base64 characters
-        result.push(CHARS[((bitmap >> 18) & 63) as usize] as char);
-        result.push(CHARS[((bitmap >> 12) & 63) as usize] as char);
-
-        if i + 1 < input.len() {
-            result.push(CHARS[((bitmap >> 6) & 63) as usize] as char);
-        } else {
-            result.push('=');
-        }
-
-        if i + 2 < input.len() {
-            result.push(CHARS[(bitmap & 63) as usize] as char);
-        } else {
-            result.push('=');
-        }
-
-        i += 3;
-    }
-
-    result
 }
