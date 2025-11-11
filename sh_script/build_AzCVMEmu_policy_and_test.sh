@@ -243,7 +243,7 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --mock-report"
             echo
             echo "  # Mock report mode with custom quote file:"
-            echo "  $0 --mock-quote-file ./config/AzCVMEmu/az_migtd_quote.blob"
+            echo "  $0 --mock-quote-file ./config/AzCVMEmu/az_migtd_quote_v4.blob"
             echo
             echo "  # Generate policy but skip test:"
             echo "  $0 --mock-report --skip-test"

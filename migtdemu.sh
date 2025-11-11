@@ -90,7 +90,7 @@ show_usage() {
     echo "  $0 --skip-ra --both                  # Run both source and destination with skip RA mode"
     echo "  $0 --mock-report --role source       # Build with mock report mode (full attestation with mock data)"
     echo "  $0 --mock-report --both              # Run both source and destination with mock report mode"
-    echo "  $0 --mock-report --mock-quote-file ./config/AzCVMEmu/az_migtd_quote.blob --both  # Use custom mock quote file"
+    echo "  $0 --mock-report --mock-quote-file ./config/AzCVMEmu/az_migtd_quote_v4.blob --both  # Use custom mock quote file"
     echo "  $0 --features spdm_attestation       # Build with extra SPDM attestation feature"
     echo "  $0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both     # Run both with policy v2 in debug mode"
     echo "  $0 --log-level debug --role source   # Run with debug log level"
