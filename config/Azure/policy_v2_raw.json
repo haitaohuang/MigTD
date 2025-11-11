@@ -1,0 +1,2 @@
+
+{"id":"251E9C0A-0BB3-4B1F-8BEB-381F155CB8C6","version":"2.0","policySvn":1,"policy":[{"global":{"tcb":{"tcbEvaluationDataNumber":{"operation":"greater-or-equal","reference":16},"tcbDate":{"operation":"greater-or-equal","reference":"2023-07-01T00:00:00Z"},"tcbStatusAccepted":{"operation":"allow-list","reference":["UpToDate"]}},"platform":{"fmspc":{"operation":"allow-list","reference":["50806F000000","00806F050000","90C06F000000"]}}}}]}
