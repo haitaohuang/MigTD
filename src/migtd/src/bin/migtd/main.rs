@@ -18,7 +18,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use log::info;
 #[cfg(feature = "vmcall-raw")]
-use log::Level;
+use log::{debug, Level};
 use migtd::event_log::*;
 #[cfg(not(feature = "vmcall-raw"))]
 use migtd::migration::data::MigrationInformation;
@@ -29,10 +29,56 @@ use migtd::migration::logging::*;
 use migtd::migration::session::*;
 use migtd::migration::MigrationResult;
 use migtd::{config, event_log, migration};
+#[cfg(feature = "vmcall-raw")]
+use sha2::{Digest, Sha384};
 use spin::Mutex;
+#[cfg(feature = "vmcall-raw")]
+use tdx_tdcall::tdreport;
 
 #[cfg(feature = "AzCVMEmu")]
 mod cvmemu;
+
+// Local trait to convert TdInfo to bytes without external dependency
+#[cfg(feature = "vmcall-raw")]
+trait TdInfoAsBytes {
+    fn as_bytes(&self) -> &[u8];
+}
+#[cfg(feature = "vmcall-raw")]
+impl TdInfoAsBytes for tdreport::TdInfo {
+    fn as_bytes(&self) -> &[u8] {
+        unsafe {
+            core::slice::from_raw_parts(
+                self as *const _ as *const u8,
+                core::mem::size_of::<tdreport::TdInfo>(),
+            )
+        }
+    }
+}
+#[cfg(feature = "vmcall-raw")]
+fn debug_td_report() {
+    let td_report =
+        match tdx_tdcall::tdreport::tdcall_report(&[0u8; tdreport::TD_REPORT_ADDITIONAL_DATA_SIZE])
+        {
+            Ok(report) => report,
+            Err(e) => {
+                debug!("Failed to get TD report: {:?}\n", e);
+                return;
+            }
+        };
+    info!("td_report: {:?}\n", td_report);
+    info!("td_report as bytes : {:?}\n", td_report.as_bytes());
+    info!(
+        "td_report length in bytes: {}\n",
+        td_report.as_bytes().len()
+    );
+
+    info!("td_info: {:?}\n", td_report.td_info);
+    let mut hasher = Sha384::new();
+    hasher.update(td_report.td_info.as_bytes());
+
+    let hash = hasher.finalize();
+    info!("TD Info Hash: {:x}\n", hash);
+}
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -66,6 +112,14 @@ pub fn runtime_main() {
     // Dump basic information of MigTD
     basic_info();
 
+
+    #[cfg(feature = "vmcall-raw")]
+    {
+        info!("log::max_level() = {}\n", log::max_level());
+        if log::max_level() >= Level::Info {
+            debug_td_report();
+        }
+    }
     // Measure the input data
     do_measurements();
 
@@ -78,6 +132,8 @@ pub fn runtime_main() {
             panic!("Migration is not supported by VMM");
         }
     }
+
+
 
     // Handle the migration request from VMM
     handle_pre_mig();
