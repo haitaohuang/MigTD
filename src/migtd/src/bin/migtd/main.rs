@@ -64,17 +64,17 @@ fn dump_td_info_and_hash() {
                 return;
             }
         };
-    debug!(
+    info!(
         "td_report length in bytes: {}\n",
         td_report.as_bytes().len()
     );
 
-    debug!("td_info: {:?}\n", td_report.td_info);
+    info!("td_info: {:?}\n", td_report.td_info);
     let mut hasher = Sha384::new();
     hasher.update(td_report.td_info.as_bytes());
 
     let hash = hasher.finalize();
-    debug!("TD Info Hash: {:x}\n", hash);
+    info!("TD Info Hash: {:x}\n", hash);
 }
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -111,6 +111,14 @@ pub fn runtime_main() {
     // Dump basic information of MigTD
     basic_info();
 
+
+    #[cfg(feature = "vmcall-raw")]
+    {
+        info!("log::max_level() = {}\n", log::max_level());
+        if log::max_level() >= Level::Info {
+            dump_td_info_and_hash();
+        }
+    }
     // Measure the input data
     do_measurements();
 
@@ -160,6 +168,8 @@ fn do_measurements() {
 
     // Get migration td policy from CFV and measure it into RTMR
     get_policy_and_measure(event_log);
+    #[cfg(feature = "vmcall-raw")]
+    info!("Policy verified and measured successfully.");
 
     // Get root certificate from CFV and measure it into RTMR
     get_ca_and_measure(event_log);
