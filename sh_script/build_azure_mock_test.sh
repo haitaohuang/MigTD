@@ -378,8 +378,8 @@ echo "Building migtd-policy-generator..."
 cargo build --release -p migtd-policy-generator 2>&1 | grep -E "(Compiling|Finished|error)" || true
 
 # Verify tools exist
-# Note: azcvm-extract-report is in a different location
-if [ ! -f "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/release/azcvm-extract-report" ]; then
+# Note: azcvm-extract-report is in the workspace target directory
+if [ ! -f "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/target/release/azcvm-extract-report" ]; then
     echo -e "${RED}Error: Tool 'azcvm-extract-report' not found${NC}" >&2
     exit 1
 fi
@@ -414,7 +414,7 @@ if [ "$USE_MOCK_REPORT" = true ]; then
         export MOCK_QUOTE_FILE
     fi
 
-    "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/release/azcvm-extract-report" \
+    "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/target/release/azcvm-extract-report" \
         --mock-report \
         --output-json "migtd_report_data.json"
 
@@ -426,7 +426,7 @@ if [ "$USE_MOCK_REPORT" = true ]; then
 else
     # Use sudo to access vTPM device (requires /dev/tpmrm0 access)
     echo "Note: Using sudo to access vTPM device..."
-    sudo "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/release/azcvm-extract-report"
+    sudo "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/target/release/azcvm-extract-report"
 
     # Report extractor creates migtd_report_data.json in current directory
     if [ ! -f "migtd_report_data.json" ]; then
