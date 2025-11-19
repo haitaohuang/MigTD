@@ -275,6 +275,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Automatically enable mock-report mode when mock-quote-file is specified
+if [[ -n "$MOCK_QUOTE_FILE" && "$USE_MOCK_REPORT" != true ]]; then
+    echo -e "${YELLOW}Note: --mock-quote-file specified, automatically enabling --mock-report${NC}"
+    USE_MOCK_REPORT=true
+fi
+
 echo "Configuration:"
 echo "  Project root: $PROJECT_ROOT"
 echo "  Source material: $SOURCE_MATERIAL_DIR"
@@ -397,6 +403,17 @@ cd "$TEMP_DIR"
 if [ "$USE_MOCK_REPORT" = true ]; then
     echo "Using mock report data for testing..."
     echo -e "${YELLOW}Note: Will use test_mock_report feature for building${NC}"
+
+    # Set MOCK_QUOTE_FILE environment variable if specified
+    if [[ -n "$MOCK_QUOTE_FILE" ]]; then
+        # Convert to absolute path if it's a relative path
+        if [[ "$MOCK_QUOTE_FILE" != /* ]]; then
+            MOCK_QUOTE_FILE="$PROJECT_ROOT/$MOCK_QUOTE_FILE"
+        fi
+        echo "Using custom mock quote file: $MOCK_QUOTE_FILE"
+        export MOCK_QUOTE_FILE
+    fi
+
     "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/release/azcvm-extract-report" \
         --mock-report \
         --output-json "migtd_report_data.json"
@@ -615,7 +632,6 @@ fi
 if [ -z "$SKIP_TEST" ]; then
     echo -e "${BLUE}=== Step 13: Testing Policy ===${NC}"
     if [ "$USE_MOCK_REPORT" = true ]; then
-        TEST_CMD="$TEST_CMD --mock-report"
         echo "Running with mock report mode: $TEST_CMD"
         echo -e "${YELLOW}Note: Using test_mock_report feature for mock TD reports/quotes${NC}"
     else
