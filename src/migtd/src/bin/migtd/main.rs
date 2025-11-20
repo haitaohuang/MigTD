@@ -158,6 +158,8 @@ fn do_measurements() {
 
     // Get migration td policy from CFV and measure it into RTMR
     get_policy_and_measure(event_log);
+    #[cfg(feature = "vmcall-raw")]
+    info!("Policy verified and measured successfully.");
 
     // Get root certificate from CFV and measure it into RTMR
     get_ca_and_measure(event_log);
