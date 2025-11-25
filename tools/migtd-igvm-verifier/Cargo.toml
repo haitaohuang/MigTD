@@ -1,0 +1,31 @@
+[package]
+name = "migtd-igvm-verifier"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# IGVM parsing
+igvm = "0.3"
+igvm_defs = "0.3"
+
+# Use relative path to policy crate
+policy = { path = "../../src/policy", features = ["policy_v2"] }
+
+# Use td-shim-interface for FV parsing
+td-shim-interface = { path = "../../deps/td-shim/td-shim-interface" }
+
+# For GUID type compatibility
+r-efi = "3.2"
+
+# For policy verification (same as migtd uses)
+crypto = { path = "../../src/crypto" }
+attestation = { path = "../../src/attestation" }
+
+[[bin]]
+name = "migtd-igvm-verifier"
+path = "src/main.rs"

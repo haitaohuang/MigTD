@@ -19,6 +19,7 @@ members = [
     "tools/servtd-collateral-generator",
     "tools/json-signer",
     "tools/migtd-policy-verifier",
+    "tools/migtd-igvm-verifier",
     "xtask",
     ]
 
