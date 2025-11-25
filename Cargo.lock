@@ -1262,6 +1262,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "migtd-igvm-verifier"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "attestation",
+ "clap",
+ "crypto",
+ "igvm",
+ "igvm_defs",
+ "policy",
+ "r-efi",
+ "serde",
+ "serde_json",
+ "td-shim-interface",
+]
+
+[[package]]
 name = "migtd-policy-generator"
 version = "0.1.0"
 dependencies = [
