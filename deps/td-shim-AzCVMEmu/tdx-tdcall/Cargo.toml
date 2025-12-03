@@ -10,22 +10,24 @@ license = "BSD-2-Clause-Patent"
 # Original tdx-tdcall for non-emulated functions
 original-tdx-tdcall = { package = "tdx-tdcall", path = "../../td-shim/tdx-tdcall" }
 
-# Core dependencies for emulation
-tokio = { version = "1.0", features = ["net", "sync", "time", "rt", "rt-multi-thread", "io-util"], default-features = false }
+# Core dependencies for emulation (optional for quote_parser-only builds)
+tokio = { version = "1.0", features = ["net", "sync", "time", "rt", "rt-multi-thread", "io-util"], default-features = false, optional = true }
 log = { version = "0.4", default-features = false }
 
-# Azure CVM specific dependencies
-az-tdx-vtpm = { version = "0.7", git = "https://github.com/kinvolk/azure-cvm-tooling", package = "az-tdx-vtpm", default-features = false, features = ["attester"] }
-zerocopy = { version = "0.7", features = ["derive"] }
+# Azure CVM specific dependencies (optional for quote_parser-only builds)
+az-tdx-vtpm = { version = "0.7", git = "https://github.com/kinvolk/azure-cvm-tooling", package = "az-tdx-vtpm", default-features = false, features = ["attester"], optional = true }
+zerocopy = { version = "0.7", features = ["derive"], optional = true }
 
 # For compatibility with original tdx-tdcall interface
 bitflags = "2.0"
 spin = { version = "0.9", default-features = false, features = ["spin_mutex"] }
 lazy_static = { version = "1.4", features = ["spin_no_std"] }
-interrupt-emu = { path = "../interrupt-emu", package = "interrupt-emu" }
+interrupt-emu = { path = "../interrupt-emu", package = "interrupt-emu", optional = true }
 
 [features]
-default = []
+default = ["emulation"]
+emulation = ["tokio", "az-tdx-vtpm", "zerocopy", "interrupt-emu"]  # Full emulation features
+mock-quote = ["no-std"]  # Minimal feature for mock quote functionality (no std dependencies)
 no-std = []
 test_mock_report = []
 mock_report_tools = []

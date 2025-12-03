@@ -23,25 +23,40 @@ pub use original_tdx_tdcall::{TdCallError, TdVmcallError, TdcallArgs};
 // Export constants that we need from the original library
 pub const TDCALL_STATUS_SUCCESS: u64 = 0;
 
-// Our TDX emulation module
+// Shared quote parsing utilities (no-std compatible, always available)
+pub mod quote_parser;
+
+// Mock quote data (only available with test_mock_report or mock_report_tools features)
+#[cfg(any(feature = "test_mock_report", feature = "mock_report_tools"))]
+pub mod mock_quote_data;
+
+// Shared mock TD report generation (only available with test_mock_report or mock_report_tools features)
+#[cfg(any(feature = "test_mock_report", feature = "mock_report_tools"))]
+pub mod mock_report;
+
+// Full emulation features (require std and additional dependencies)
+#[cfg(feature = "emulation")]
 pub mod tdx_emu;
 
-// Our emulated tdreport module
+#[cfg(feature = "emulation")]
 pub mod tdreport_emu;
 
-// VMM-side logging emulation
+#[cfg(feature = "emulation")]
 pub mod logging_emu;
 
-// Hardcoded collateral data for AzCVMEmu mode
+#[cfg(feature = "emulation")]
+#[cfg(feature = "emulation")]
 mod collateral_data;
 
-// Re-export TDX emulation functions
+// Re-export TDX emulation functions (only when emulation feature is enabled)
+#[cfg(feature = "emulation")]
 pub use tdx_emu::{
     connect_tcp_client, init_tcp_emulation_with_mode, start_tcp_server_sync, tcp_receive_data,
     tcp_send_data, TcpEmulationMode,
 };
 
-// Re-export the emulated functions
+// Re-export the emulated functions (only when emulation feature is enabled)
+#[cfg(feature = "emulation")]
 pub mod tdx {
     // Re-export all non-MigTD functions from original
     pub use original_tdx_tdcall::tdx::{
@@ -79,7 +94,8 @@ pub mod tdx {
     };
 }
 
-// Emulated tdreport module for AzCVMEmu compatibility
+// Emulated tdreport module for AzCVMEmu compatibility (only when emulation feature is enabled)
+#[cfg(feature = "emulation")]
 pub mod tdreport {
     use crate::tdreport_emu::tdcall_report_emulated;
     use az_tdx_vtpm::tdx::TdReport as AzTdReport;
@@ -120,7 +136,8 @@ pub mod tdreport {
     }
 }
 
-// Add td_call emulation support
+// Add td_call emulation support (only when emulation feature is enabled)
+#[cfg(feature = "emulation")]
 pub fn td_call(args: &mut TdcallArgs) -> u64 {
     const TDVMCALL_SYS_RD: u64 = 0x0000b;
     const TDVMCALL_TDINFO: u64 = 0x00001;
