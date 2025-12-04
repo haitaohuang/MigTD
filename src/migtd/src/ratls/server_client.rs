@@ -577,6 +577,14 @@ mod verify {
             );
             return Ok(());
         }
+        if cfg!(feature = "no-get-quote") {
+            // In no-get-quote mode, mock quote is used for testing.
+            // Bypass public key hash check in this development environment.
+            log::warn!(
+                "no-get-quote mode: Skipping public key verification in TD report. This is NOT secure for production use.\n"
+            );
+            return Ok(());
+        }
         const PUBLIC_KEY_HASH_SIZE: usize = 48;
 
         let report_data = &verified_report[520..520 + PUBLIC_KEY_HASH_SIZE];

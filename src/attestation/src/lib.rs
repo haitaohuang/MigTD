@@ -1,4 +1,4 @@
-// Copyright (c) 2022 Intel Corporation
+// Copyright (c) Microsoft Corporation
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
@@ -23,8 +23,17 @@ mod binding;
 mod ghci;
 pub mod root_ca;
 
+// Re-export tdreport module with conditional mock support
+#[cfg(not(feature = "no-get-quote"))]
+pub use tdx_tdcall::tdreport;
+
+#[cfg(feature = "no-get-quote")]
+pub mod tdreport;
+
 #[cfg(feature = "igvm-attest")]
 mod igvmattest;
+#[cfg(feature = "no-get-quote")]
+mod mock_quote;
 
 pub use attest::*;
 

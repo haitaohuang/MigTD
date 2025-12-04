@@ -19,6 +19,10 @@ use core::{alloc::Layout, ffi::c_void, ops::Range};
 #[cfg(not(feature = "igvm-attest"))]
 use tdx_tdcall::tdreport::*;
 
+// Compile-time check: igvm-attest and no-get-quote are mutually exclusive
+#[cfg(all(feature = "igvm-attest", feature = "no-get-quote"))]
+compile_error!("Features 'igvm-attest' and 'no-get-quote' are mutually exclusive. Enable only one.");
+
 pub const TD_QUOTE_SIZE: usize = 0x2000;
 const TD_REPORT_VERIFY_SIZE: usize = 1024;
 const ATTEST_HEAP_SIZE: usize = 0x80000;
@@ -80,7 +84,12 @@ pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
         return crate::igvmattest::get_quote_igvm(td_report);
     }
 
-    #[cfg(not(feature = "igvm-attest"))]
+    #[cfg(feature = "no-get-quote")]
+    {
+        return Ok(crate::mock_quote::get_mock_quote(td_report));
+    }
+
+    #[cfg(not(any(feature = "igvm-attest", feature = "no-get-quote")))]
     {
         let mut quote = vec![0u8; TD_QUOTE_SIZE];
         let mut quote_size = TD_QUOTE_SIZE as u32;

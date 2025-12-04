@@ -267,7 +267,13 @@ fn replay_event_log_with_report(event_log: &[u8], report: &[u8]) -> Result<()> {
         {
             Ok(())
         }
-        #[cfg(not(feature = "AzCVMEmu"))]
+        // In no-get-quote mode, mock quote won't have valid RTMR matching event log.
+        #[cfg(feature = "no-get-quote")]
+        {
+            log::warn!("Event log verification bypassed due to no-get-quote feature");
+            Ok(())
+        }
+        #[cfg(not(any(feature = "AzCVMEmu", feature = "no-get-quote")))]
         Err(anyhow!("Invalid event log"))
     }
 }
