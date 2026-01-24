@@ -15,7 +15,7 @@ pub use policy::*;
 impl<'a> Report<'a> {
     pub fn new(report: &'a [u8]) -> Result<Self, PolicyError> {
         if report.len() != REPORT_DATA_SIZE {
-            return Err(PolicyError::InvalidParameter);
+            return Err(PolicyError::InvalidParameter("Invalid report size"));
         }
 
         Ok(Report {
@@ -55,7 +55,7 @@ fn verify_event_hash(
 fn hex_string_to_bytes(hex: &str) -> Result<Vec<u8>, PolicyError> {
     // Ensure even number of characters
     if hex.is_empty() || hex.len() % 2 != 0 {
-        return Err(PolicyError::InvalidParameter);
+        return Err(PolicyError::InvalidParameter("Invalid hex string length"));
     }
 
     let mut bytes = Vec::with_capacity(hex.len() / 2);
@@ -70,7 +70,8 @@ fn hex_string_to_bytes(hex: &str) -> Result<Vec<u8>, PolicyError> {
         let byte_str = &hex[i..i + 2];
 
         // Convert to numeric value
-        let byte = u8::from_str_radix(byte_str, 16).map_err(|_| PolicyError::InvalidParameter)?;
+        let byte = u8::from_str_radix(byte_str, 16)
+            .map_err(|_| PolicyError::InvalidParameter("Invalid hex string decode"))?;
 
         bytes.push(byte);
     }

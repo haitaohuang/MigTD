@@ -127,7 +127,7 @@ pub fn get_collateral_with_fmspc(
     collaterals: &Collaterals,
 ) -> Result<Collateral, PolicyError> {
     if fmspc.len() != 6 {
-        return Err(PolicyError::InvalidParameter);
+        return Err(PolicyError::InvalidParameter("Invalid FMSPC length"));
     }
 
     let fmspc_str = bytes_to_hex_string(fmspc);

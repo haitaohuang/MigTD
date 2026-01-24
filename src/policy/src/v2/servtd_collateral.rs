@@ -52,7 +52,11 @@ impl<'a> RawServtdIdentity<'a> {
             self.td_identity.get().as_bytes(),
             &signature,
         )
-        .map_err(|_| PolicyError::SignatureVerificationFailed)?;
+        .map_err(|_| {
+            PolicyError::SignatureVerificationFailed(
+                "ServTD identity signature verification failed",
+            )
+        })?;
 
         serde_json::from_str::<TdIdentity>(self.td_identity.get())
             .map_err(|_| PolicyError::InvalidServtdIdentity)
@@ -125,7 +129,11 @@ impl<'a> RawServtdTcbMapping<'a> {
             self.td_tcb_mapping.get().as_bytes(),
             &signature,
         )
-        .map_err(|_| PolicyError::SignatureVerificationFailed)?;
+        .map_err(|_| {
+            PolicyError::SignatureVerificationFailed(
+                "ServTD TCB mapping signature verification failed",
+            )
+        })?;
 
         serde_json::from_str::<TdTcbMapping>(self.td_tcb_mapping.get())
             .map_err(|_| PolicyError::InvalidServtdTcbMapping)

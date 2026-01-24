@@ -30,13 +30,17 @@ mod v1 {
         let policy = if let Some(policy) = get_policy() {
             policy
         } else {
-            return Err(PolicyError::InvalidParameter);
+            return Err(PolicyError::InvalidParameter("Policy not configured"));
         };
 
         verify_event_log(event_log_peer, verified_report_peer)
             .map_err(|_| PolicyError::InvalidEventLog)?;
-        let event_log = parse_events(event_log).ok_or(PolicyError::InvalidParameter)?;
-        let event_log_peer = parse_events(event_log_peer).ok_or(PolicyError::InvalidParameter)?;
+        let event_log = parse_events(event_log).ok_or(PolicyError::InvalidParameter(
+            "Failed to parse local event log",
+        ))?;
+        let event_log_peer = parse_events(event_log_peer).ok_or(PolicyError::InvalidParameter(
+            "Failed to parse peer event log",
+        ))?;
 
         verify_policy(
             is_src,
@@ -95,7 +99,8 @@ mod v2 {
         // Store in the global static
         LOCAL_TCB_INFO
             .try_call_once(|| {
-                let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+                let policy = get_verified_policy()
+                    .ok_or(PolicyError::InvalidParameter("Policy not initialized"))?;
                 let tdx_report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
                     .map_err(|_| PolicyError::GetTdxReport)?;
                 let quote = attestation::get_quote(tdx_report.as_bytes())
@@ -110,7 +115,9 @@ mod v2 {
         LOCAL_TCB_INFO
             .get()
             .cloned()
-            .ok_or(PolicyError::InvalidParameter)
+            .ok_or(PolicyError::InvalidParameter(
+                "Local TCB info not initialized",
+            ))
     }
 
     /// Get reference to the global verified policy
@@ -125,7 +132,9 @@ mod v2 {
         policy_peer: &[u8],
         event_log_peer: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
+        let policy_issuer_chain = get_policy_issuer_chain().ok_or(
+            PolicyError::InvalidParameter("Policy issuer chain not configured"),
+        )?;
         if is_src {
             authenticate_migration_dest(
                 quote_peer,
@@ -156,7 +165,9 @@ mod v2 {
             policy_issuer_chain,
         )?;
         let relative_reference = get_local_tcb_evaluation_info()?;
-        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter(
+            "Policy not initialized in dest",
+        ))?;
 
         policy
             .policy_data
@@ -186,7 +197,9 @@ mod v2 {
             policy_issuer_chain,
         )?;
         let relative_reference = get_local_tcb_evaluation_info()?;
-        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter(
+            "Policy not initialized in src",
+        ))?;
 
         policy
             .policy_data
@@ -201,7 +214,8 @@ mod v2 {
         mig_policy: &'p [u8],
         policy_issuer_chain: &[u8],
     ) -> Result<(PolicyEvaluationInfo, VerifiedPolicy<'p>, Vec<u8>), PolicyError> {
-        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+        let policy =
+            get_verified_policy().ok_or(PolicyError::InvalidParameter("Policy not initialized"))?;
         let unverified_policy = RawPolicyData::deserialize_from_json(mig_policy)?;
 
         // 1. Verify quote & get supplemental data
@@ -261,11 +275,9 @@ mod v2 {
         let (tcb_date, tcb_status) = get_tcb_date_and_status_from_suppl_data(suppl_data)?;
         let collateral = get_collateral_with_fmspc(&fmspc, collaterals)?;
         let tcb_evaluation_number = get_tcb_evaluation_number_from_collateral(&collateral)?;
-        let report_value = Report::new(
-            suppl_data
-                .get(..REPORT_DATA_SIZE)
-                .ok_or(PolicyError::InvalidParameter)?,
-        )?;
+        let report_value = Report::new(suppl_data.get(..REPORT_DATA_SIZE).ok_or(
+            PolicyError::InvalidParameter("Supplemental data too short for report"),
+        )?)?;
 
         let migtd_svn = policy
             .servtd_tcb_mapping
@@ -294,7 +306,7 @@ mod v2 {
         suppl_data: &[u8],
     ) -> Result<(String, String), PolicyError> {
         if suppl_data.len() < REPORT_DATA_SIZE {
-            return Err(PolicyError::InvalidParameter);
+            return Err(PolicyError::InvalidParameter("Supplemental data too short"));
         }
 
         let tcb_date_bytes = &suppl_data[Report::R_TCB_DATE];
@@ -309,7 +321,7 @@ mod v2 {
     fn unix_to_iso8601(unix_timestamp: u64) -> Result<String, PolicyError> {
         DateTime::from_timestamp(unix_timestamp as i64, 0)
             .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-            .ok_or(PolicyError::InvalidParameter)
+            .ok_or(PolicyError::InvalidParameter("Invalid UTC timestamp"))
     }
 
     fn slice_to_string_null_terminated(slice: &[u8]) -> Result<String, PolicyError> {
@@ -318,7 +330,8 @@ mod v2 {
         let str_bytes = &slice[..end_pos];
 
         // Convert to String
-        String::from_utf8(str_bytes.to_vec()).map_err(|_| PolicyError::InvalidParameter)
+        String::from_utf8(str_bytes.to_vec())
+            .map_err(|_| PolicyError::InvalidParameter("Invalid UTF-8 in TCB status"))
     }
 
     fn convert_collateral_to_cstring(

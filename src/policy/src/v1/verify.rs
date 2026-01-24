@@ -56,7 +56,7 @@ pub fn verify_policy(
     events_peer: &BTreeMap<EventName, CcEvent>,
 ) -> Result<(), PolicyError> {
     if report.len() < REPORT_DATA_SIZE || report_peer.len() < REPORT_DATA_SIZE {
-        return Err(PolicyError::InvalidParameter);
+        return Err(PolicyError::InvalidParameter("Invalid report size"));
     }
 
     // Remove the trailing zeros inside the utf8 string,
@@ -382,7 +382,10 @@ mod tests {
             &[0u8; REPORT_DATA_SIZE],
             &BTreeMap::new(),
         );
-        assert!(matches!(verify_result, Err(PolicyError::InvalidParameter)));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::InvalidParameter(_))
+        ));
 
         let verify_result = verify_policy(
             true,
@@ -392,7 +395,10 @@ mod tests {
             &[0u8; REPORT_DATA_SIZE - 1],
             &BTreeMap::new(),
         );
-        assert!(matches!(verify_result, Err(PolicyError::InvalidParameter)));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::InvalidParameter(_))
+        ));
     }
 
     #[test]

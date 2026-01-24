@@ -24,7 +24,7 @@ pub const REPORT_DATA_SIZE: usize = 774;
 #[derive(Debug)]
 pub enum PolicyError {
     FailGetReport,
-    InvalidParameter,
+    InvalidParameter(&'static str),
     InvalidPolicy,
     InvalidEventLog,
     PlatformNotFound(String),
@@ -34,7 +34,7 @@ pub enum PolicyError {
     UnqualifiedTdxModuleInfo,
     UnqualifiedMigTdInfo,
     Crypto,
-    SignatureVerificationFailed,
+    SignatureVerificationFailed(&'static str),
     InvalidCollateral,
     InvalidOperation,
     InvalidReference,
@@ -43,7 +43,7 @@ pub enum PolicyError {
     PolicyHashMismatch,
     InvalidQuote,
     SvnMismatch,
-    TcbEvaluation,
+    TcbEvaluation(&'static str),
     CrlEvaluation,
     HashCalculation,
     QuoteVerification,
@@ -122,7 +122,9 @@ impl<'a> Report<'a> {
     fn get_migtd_info_property(&self, name: &MigTdInfoProperty) -> Result<&[u8], PolicyError> {
         self.migtd_info
             .get(name)
-            .ok_or(PolicyError::InvalidParameter)
+            .ok_or(PolicyError::InvalidParameter(
+                "MigTD info property not found",
+            ))
             .copied()
     }
 }

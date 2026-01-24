@@ -14,7 +14,7 @@ use crate::{PolicyError, Report, REPORT_DATA_SIZE};
 impl<'a> Report<'a> {
     pub fn new(report: &'a [u8]) -> Result<Self, PolicyError> {
         if report.len() != REPORT_DATA_SIZE {
-            return Err(PolicyError::InvalidParameter);
+            return Err(PolicyError::InvalidParameter("Invalid report size"));
         }
 
         Ok(Report {
@@ -95,14 +95,16 @@ impl<'a> Report<'a> {
     ) -> Result<&[u8], PolicyError> {
         self.platform_info
             .get(name)
-            .ok_or(PolicyError::InvalidParameter)
+            .ok_or(PolicyError::InvalidParameter(
+                "Platform info property not found",
+            ))
             .copied()
     }
 
     pub(crate) fn get_qe_info_property(&self, name: &QeInfoProperty) -> Result<&[u8], PolicyError> {
         self.qe_info
             .get(name)
-            .ok_or(PolicyError::InvalidParameter)
+            .ok_or(PolicyError::InvalidParameter("QE info property not found"))
             .copied()
     }
 
@@ -112,7 +114,9 @@ impl<'a> Report<'a> {
     ) -> Result<&[u8], PolicyError> {
         self.tdx_module_info
             .get(name)
-            .ok_or(PolicyError::InvalidParameter)
+            .ok_or(PolicyError::InvalidParameter(
+                "TDX module info property not found",
+            ))
             .copied()
     }
 }

@@ -63,7 +63,7 @@ impl TryFrom<&str> for TcbStatus {
             "OutOfDate" => Ok(TcbStatus::OutOfDate),
             "OutOfDateConfigurationNeeded" => Ok(TcbStatus::OutOfDateConfigurationNeeded),
             "Revoked" => Ok(TcbStatus::Revoked),
-            _ => Err(PolicyError::InvalidParameter),
+            _ => Err(PolicyError::InvalidParameter("Invalid TCB status string")),
         }
     }
 }
@@ -114,7 +114,9 @@ impl TryFrom<&str> for ServtdTcbStatus {
             "UpToDate" => Ok(ServtdTcbStatus::UpToDate),
             "OutOfDate" => Ok(ServtdTcbStatus::OutOfDate),
             "Revoked" => Ok(ServtdTcbStatus::Revoked),
-            _ => Err(PolicyError::InvalidParameter),
+            _ => Err(PolicyError::InvalidParameter(
+                "Invalid ServTD TCB status string",
+            )),
         }
     }
 }
@@ -238,7 +240,7 @@ impl<'a> RawPolicyData<'a> {
 
         // Step 3: Sanity checks
         if !policy_data.validate() {
-            return Err(PolicyError::InvalidParameter);
+            return Err(PolicyError::InvalidParameter("Policy validation failed"));
         }
 
         Ok(VerifiedPolicy {
@@ -261,7 +263,9 @@ impl<'a> RawPolicyData<'a> {
             self.policy_data.get().as_bytes(),
             &signature,
         )
-        .map_err(|_| PolicyError::SignatureVerificationFailed)?;
+        .map_err(|_| {
+            PolicyError::SignatureVerificationFailed("Policy signature verification failed")
+        })?;
 
         serde_json::from_str::<PolicyData>(self.policy_data.get())
             .map_err(|_| PolicyError::InvalidPolicy)
@@ -402,12 +406,14 @@ impl TcbPolicy {
         if let Some(property) = &self.tcb_evaluation_data_number {
             let tcb_evaluation_number = value
                 .tcb_evaluation_number
-                .ok_or(PolicyError::TcbEvaluation)?;
+                .ok_or(PolicyError::TcbEvaluation("TCB evaluation number missing"))?;
             if !property.evaluate_integer(
                 tcb_evaluation_number,
                 relative_reference.tcb_evaluation_number,
             )? {
-                return Err(PolicyError::TcbEvaluation);
+                return Err(PolicyError::TcbEvaluation(
+                    "TCB evaluation number check failed",
+                ));
             }
         }
 
@@ -417,13 +423,13 @@ impl TcbPolicy {
                     .tcb_status
                     .as_deref()
                     .and_then(|s| s.try_into().ok())
-                    .ok_or(PolicyError::TcbEvaluation)?,
+                    .ok_or(PolicyError::TcbEvaluation("TCB status missing or invalid"))?,
                 relative_reference
                     .tcb_status
                     .as_deref()
                     .and_then(|s| s.try_into().ok()),
             )? {
-                return Err(PolicyError::TcbEvaluation);
+                return Err(PolicyError::TcbEvaluation("TCB status check failed"));
             }
         }
 
@@ -432,10 +438,10 @@ impl TcbPolicy {
                 value
                     .tcb_date
                     .as_deref()
-                    .ok_or(PolicyError::TcbEvaluation)?,
+                    .ok_or(PolicyError::TcbEvaluation("TCB date missing"))?,
                 relative_reference.tcb_date.as_deref(),
             )? {
-                return Err(PolicyError::TcbEvaluation);
+                return Err(PolicyError::TcbEvaluation("TCB date check failed"));
             }
         }
 
@@ -455,13 +461,16 @@ impl PlatformPolicy {
         relative_reference: &PolicyEvaluationInfo,
     ) -> Result<(), PolicyError> {
         if let Some(property) = &self.fmspc {
-            let fmspc = value.fmspc.as_ref().ok_or(PolicyError::TcbEvaluation)?;
+            let fmspc = value
+                .fmspc
+                .as_ref()
+                .ok_or(PolicyError::TcbEvaluation("FMSPC missing"))?;
             let relative = relative_reference
                 .fmspc
                 .as_ref()
                 .map(|s| bytes_to_hex_string(s));
             if !property.evaluate_string(&bytes_to_hex_string(fmspc), relative.as_deref())? {
-                return Err(PolicyError::TcbEvaluation);
+                return Err(PolicyError::TcbEvaluation("FMSPC check failed"));
             }
         }
 
