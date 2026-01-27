@@ -422,8 +422,17 @@ fn handle_pre_mig() {
                 {
                     match request {
                         WaitForRequestResponse::StartMigration(wfr_info) => {
-                            let status = exchange_msk(&wfr_info)
-                                .await
+                            log::info!(migration_request_id = wfr_info.mig_info.mig_request_id; "Processing StartMigration request\n");
+
+                            // Call exchange_msk() and log its immediate outcome
+                            let res = exchange_msk(&wfr_info).await;
+                            match &res {
+                                Ok(_) => log::info!(migration_request_id = wfr_info.mig_info.mig_request_id; "exchange_msk() returned Ok\n"),
+                                Err(e) => {
+                                    log::error!(migration_request_id = wfr_info.mig_info.mig_request_id; "exchange_msk() returned error code {}\n", *e as u8)
+                                }
+                            }
+                            let status = res
                                 .map(|_| MigrationResult::Success)
                                 .unwrap_or_else(|e| e);
                             if status == MigrationResult::Success {
@@ -444,12 +453,21 @@ fn handle_pre_mig() {
                                 );
                             });
                             log::trace!(migration_request_id = wfr_info.mig_info.mig_request_id; "ReportStatus for key exchange completed\n");
+
+                            if status == MigrationResult::Success {
+                                log::info!(migration_request_id = wfr_info.mig_info.mig_request_id; "Migration key exchange successful!\n");
+                            } else {
+                                log::error!(migration_request_id = wfr_info.mig_info.mig_request_id;
+                                    "Migration key exchange failed with code: {}\n",
+                                    status as u8
+                                );
+                            }
                             REQUESTS.lock().remove(&wfr_info.mig_info.mig_request_id);
                         }
                         #[cfg(feature = "policy_v2")]
                         WaitForRequestResponse::StartRebinding(rebinding_info) => {
                             use migtd::migration::rebinding::start_rebinding;
-
+                            log::info!(migration_request_id = rebinding_info.mig_request_id; "Processing StartRebinding request\n");
                             let status = start_rebinding(&rebinding_info, &mut data)
                                 .await
                                 .map(|_| MigrationResult::Success)
@@ -480,6 +498,7 @@ fn handle_pre_mig() {
                             REQUESTS.lock().remove(&rebinding_info.mig_request_id);
                         }
                         WaitForRequestResponse::GetTdReport(wfr_info) => {
+                            log::info!(migration_request_id = wfr_info.mig_request_id; "Processing GetTdReport request\n");
                             let status = get_tdreport(
                                 &wfr_info.reportdata,
                                 &mut data,
@@ -499,6 +518,7 @@ fn handle_pre_mig() {
                             REQUESTS.lock().remove(&wfr_info.mig_request_id);
                         }
                         WaitForRequestResponse::EnableLogArea(wfr_info) => {
+                            log::info!(migration_request_id = wfr_info.mig_request_id; "Processing EnableLogArea request\n");
                             let status = enable_logarea(
                                 wfr_info.log_max_level,
                                 wfr_info.mig_request_id,
@@ -532,6 +552,7 @@ fn handle_pre_mig() {
                         }
                         #[cfg(feature = "policy_v2")]
                         WaitForRequestResponse::GetMigtdData(wfr_info) => {
+                            log::info!(migration_request_id = wfr_info.mig_request_id; "Processing GetMigtdData request\n");
                             let status = get_migtd_data(
                                 &wfr_info.reportdata,
                                 &mut data,
