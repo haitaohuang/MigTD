@@ -23,7 +23,7 @@ use tdx_tdcall::{td_call, TdcallArgs};
 use zerocopy::{transmute_ref, AsBytes, FromBytes, FromZeroes};
 
 // Use td-logger-emu for AzCVMEmu mode (console output), td-logger for real td-shim
-#[cfg(feature = "AzCVMEmu")]
+#[cfg(all(feature = "AzCVMEmu", debug_assertions))]
 use td_logger_emu as td_logger;
 
 const PAGE_SIZE: usize = 0x1_000;
