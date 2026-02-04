@@ -1008,6 +1008,17 @@ async fn migration_dst_exchange_msk(
 
 #[cfg(feature = "main")]
 pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
+    // Test harness: Read and validate SERVTD_ATTR from target TD's TDCS
+    // This tests TDG.SERVTD.RD for metadata access as per TDX Module Base Spec section 13.4
+    #[cfg(feature = "test_servtd_attr")]
+    {
+        if let Err(e) = test_servtd_attr_read(&info.mig_info) {
+            log::warn!(migration_request_id = info.mig_info.mig_request_id;
+                "exchange_msk: test_servtd_attr_read failed (non-fatal): {:?}\n", e);
+            // Test only, we continue even if it fails
+        }
+    }
+
     let mut transport = setup_transport(
         info.mig_info.mig_request_id,
         #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
@@ -1260,6 +1271,213 @@ pub fn set_mig_version(mig_info: &MigtdMigrationInformation, mig_ver: u16) -> Re
         log::error!(migration_request_id = mig_info.mig_request_id; "set_mig_version: tdcall_servtd_wr failed with error: {:?} for mig_info.binding_handle = {}, mig_ver = {}\n", e, mig_info.binding_handle, mig_ver);
         e
     })?;
+    Ok(())
+}
+
+/// TDCS field base identifier for SERVTD_ATTR.
+const TDCS_FIELD_SERVTD_ATTR: u64 = 0x1910_0003_0000_0202;
+
+/// SERVTD_ATTR bit definitions, see TDX Module ABI Spec.
+pub const SERVTD_ATTR_IGNORE_ATTRIBUTES: u64 = 1 << 32;
+pub const SERVTD_ATTR_IGNORE_XFAM: u64 = 1 << 33;
+pub const SERVTD_ATTR_IGNORE_MRTD: u64 = 1 << 34;
+pub const SERVTD_ATTR_IGNORE_MRCONFIGID: u64 = 1 << 35;
+pub const SERVTD_ATTR_IGNORE_MROWNER: u64 = 1 << 36;
+pub const SERVTD_ATTR_IGNORE_MROWNERCONFIG: u64 = 1 << 37;
+pub const SERVTD_ATTR_IGNORE_RTMR0: u64 = 1 << 38;
+pub const SERVTD_ATTR_IGNORE_RTMR1: u64 = 1 << 39;
+pub const SERVTD_ATTR_IGNORE_RTMR2: u64 = 1 << 40;
+pub const SERVTD_ATTR_IGNORE_RTMR3: u64 = 1 << 41;
+pub const SERVTD_ATTR_IGNORE_SERVTD_HASH: u64 = 1 << 42;
+pub const SERVTD_ATTR_IGNORE_MRSIGROOT: u64 = 1 << 43;
+pub const SERVTD_ATTR_IGNORE_MRSIGNER: u64 = 1 << 44;
+pub const SERVTD_ATTR_IGNORE_PRODID: u64 = 1 << 45;
+pub const SERVTD_ATTR_IGNORE_ISVSVN: u64 = 1 << 46;
+pub const SERVTD_ATTR_IGNORE_MRCONFIGSVN: u64 = 1 << 47;
+pub const SERVTD_ATTR_IGNORE_MROWNERCONFIGSVN: u64 = 1 << 48;
+
+/// Result structure for SERVTD_ATTR read operation
+#[derive(Debug, Clone)]
+pub struct ServtdAttrInfo {
+    /// The raw SERVTD_ATTR value read from the target TD
+    pub raw_value: u64,
+    /// Whether to ignore ATTRIBUTES measurement (bit 32)
+    pub ignore_attributes: bool,
+    /// Whether to ignore XFAM measurement (bit 33)
+    pub ignore_xfam: bool,
+    /// Whether to ignore MRTD measurement (bit 34)
+    pub ignore_mrtd: bool,
+    /// Whether to ignore MRCONFIGID measurement (bit 35)
+    pub ignore_mrconfigid: bool,
+    /// Whether to ignore MROWNER measurement (bit 36)
+    pub ignore_mrowner: bool,
+    /// Whether to ignore MROWNERCONFIG measurement (bit 37)
+    pub ignore_mrownerconfig: bool,
+    /// Whether to ignore RTMR0 measurement (bit 38)
+    pub ignore_rtmr0: bool,
+    /// Whether to ignore RTMR1 measurement (bit 39)
+    pub ignore_rtmr1: bool,
+    /// Whether to ignore RTMR2 measurement (bit 40)
+    pub ignore_rtmr2: bool,
+    /// Whether to ignore RTMR3 measurement (bit 41)
+    pub ignore_rtmr3: bool,
+    /// Whether to ignore SERVTD_HASH (bit 42)
+    pub ignore_servtd_hash: bool,
+    /// Whether to ignore MRSIGROOT (bit 43, requires TDX_FEATURES0.TD_SIGNING_AND_SVN)
+    pub ignore_mrsigroot: bool,
+    /// Whether to ignore MRSIGNER (bit 44, requires TDX_FEATURES0.TD_SIGNING_AND_SVN)
+    pub ignore_mrsigner: bool,
+    /// Whether to ignore PRODID (bit 45, requires TDX_FEATURES0.TD_SIGNING_AND_SVN)
+    pub ignore_prodid: bool,
+    /// Whether to ignore ISVSVN (bit 46, requires TDX_FEATURES0.TD_SIGNING_AND_SVN)
+    pub ignore_isvsvn: bool,
+    /// Whether to ignore MRCONFIGSVN (bit 47, requires TDX_FEATURES0.SEALING)
+    pub ignore_mrconfigsvn: bool,
+    /// Whether to ignore MROWNERCONFIGSVN (bit 48, requires TDX_FEATURES0.SEALING)
+    pub ignore_mrownerconfigsvn: bool,
+}
+
+impl ServtdAttrInfo {
+    /// Parse a raw SERVTD_ATTR value into structured fields
+    pub fn from_raw(raw_value: u64) -> Self {
+        Self {
+            raw_value,
+            ignore_attributes: (raw_value & SERVTD_ATTR_IGNORE_ATTRIBUTES) != 0,
+            ignore_xfam: (raw_value & SERVTD_ATTR_IGNORE_XFAM) != 0,
+            ignore_mrtd: (raw_value & SERVTD_ATTR_IGNORE_MRTD) != 0,
+            ignore_mrconfigid: (raw_value & SERVTD_ATTR_IGNORE_MRCONFIGID) != 0,
+            ignore_mrowner: (raw_value & SERVTD_ATTR_IGNORE_MROWNER) != 0,
+            ignore_mrownerconfig: (raw_value & SERVTD_ATTR_IGNORE_MROWNERCONFIG) != 0,
+            ignore_rtmr0: (raw_value & SERVTD_ATTR_IGNORE_RTMR0) != 0,
+            ignore_rtmr1: (raw_value & SERVTD_ATTR_IGNORE_RTMR1) != 0,
+            ignore_rtmr2: (raw_value & SERVTD_ATTR_IGNORE_RTMR2) != 0,
+            ignore_rtmr3: (raw_value & SERVTD_ATTR_IGNORE_RTMR3) != 0,
+            ignore_servtd_hash: (raw_value & SERVTD_ATTR_IGNORE_SERVTD_HASH) != 0,
+            ignore_mrsigroot: (raw_value & SERVTD_ATTR_IGNORE_MRSIGROOT) != 0,
+            ignore_mrsigner: (raw_value & SERVTD_ATTR_IGNORE_MRSIGNER) != 0,
+            ignore_prodid: (raw_value & SERVTD_ATTR_IGNORE_PRODID) != 0,
+            ignore_isvsvn: (raw_value & SERVTD_ATTR_IGNORE_ISVSVN) != 0,
+            ignore_mrconfigsvn: (raw_value & SERVTD_ATTR_IGNORE_MRCONFIGSVN) != 0,
+            ignore_mrownerconfigsvn: (raw_value & SERVTD_ATTR_IGNORE_MROWNERCONFIGSVN) != 0,
+        }
+    }
+}
+
+/// Read SERVTD_ATTR from the target TD using TDG.SERVTD.RD.
+///
+/// This function uses the TDG.SERVTD.RD TDCALL to read the SERVTD_ATTR field
+/// from the Service TD Binding Table entry in the target TD's TDCS.
+///
+/// # Arguments
+/// * `mig_info` - Migration information containing binding_handle and target_td_uuid
+///
+/// # Returns
+/// * `Ok(ServtdAttrInfo)` - The parsed SERVTD_ATTR information
+/// * `Err(MigrationResult)` - If the TDCALL fails
+///
+/// # Reference
+/// - TDX Module Base Spec section 13.4 "Target TD Metadata Access by a Service TD"
+pub fn read_servtd_attr(mig_info: &MigtdMigrationInformation) -> Result<ServtdAttrInfo> {
+    let ret = tdx::tdcall_servtd_rd(
+        mig_info.binding_handle,
+        TDCS_FIELD_SERVTD_ATTR,
+        &mig_info.target_td_uuid,
+    ).map_err(|e| {
+        log::error!(migration_request_id = mig_info.mig_request_id;
+            "read_servtd_attr: tdcall_servtd_rd failed with error: {:?} for binding_handle = {}\n",
+            e, mig_info.binding_handle);
+        MigrationResult::TdxModuleError
+    })?;
+
+    let attr_info = ServtdAttrInfo::from_raw(ret.content);
+
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "read_servtd_attr: SERVTD_ATTR = 0x{:016x}, ignore_flags = 0x{:05x}\n",
+        ret.content,
+        (ret.content >> 32) & 0x1FFFF  // Extract bits 48:32 for ignore flags
+    );
+
+    Ok(attr_info)
+}
+
+/// Test harness for TDG.SERVTD.RD reading SERVTD_ATTR for the target TD.
+///
+/// This function serves as a test harness to validate the TDG.SERVTD.RD TDCALL
+/// for reading the SERVTD_ATTR field from the target TD's TDCS during pre-migration.
+///
+/// The test performs the following:
+/// 1. Reads SERVTD_ATTR using TDG.SERVTD.RD with the binding handle from MigrationInformation
+/// 2. Logs the IGNORE flags for debugging
+///
+/// # Arguments
+/// * `mig_info` - Migration information containing binding_handle and target_td_uuid
+///
+/// # Returns
+/// * `Ok(())` - If the test passes
+/// * `Err(MigrationResult)` - If the test fails
+///
+/// # Reference
+/// - TDX Module Base Spec section 13.4 "Target TD Metadata Access by a Service TD"
+pub fn test_servtd_attr_read(mig_info: &MigtdMigrationInformation) -> Result<()> {
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "test_servtd_attr_read: Starting TDG.SERVTD.RD test for SERVTD_ATTR\n");
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "test_servtd_attr_read: binding_handle = 0x{:x}, target_td_uuid = [{:x}, {:x}, {:x}, {:x}]\n",
+        mig_info.binding_handle,
+        mig_info.target_td_uuid[0],
+        mig_info.target_td_uuid[1],
+        mig_info.target_td_uuid[2],
+        mig_info.target_td_uuid[3]
+    );
+
+    // Read SERVTD_ATTR using TDG.SERVTD.RD
+    let attr_info = read_servtd_attr(mig_info)?;
+
+    // Log detailed attribute information
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "test_servtd_attr_read: Raw SERVTD_ATTR value = 0x{:016x}\n", attr_info.raw_value);
+
+    // Log ignore flags
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "test_servtd_attr_read: IGNORE flags:\n");
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_attributes: {}\n", attr_info.ignore_attributes);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_xfam: {}\n", attr_info.ignore_xfam);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_mrtd: {}\n", attr_info.ignore_mrtd);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_mrconfigid: {}\n", attr_info.ignore_mrconfigid);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_mrowner: {}\n", attr_info.ignore_mrowner);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_mrownerconfig: {}\n", attr_info.ignore_mrownerconfig);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_rtmr0: {}\n", attr_info.ignore_rtmr0);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_rtmr1: {}\n", attr_info.ignore_rtmr1);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_rtmr2: {}\n", attr_info.ignore_rtmr2);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_rtmr3: {}\n", attr_info.ignore_rtmr3);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_servtd_hash: {}\n", attr_info.ignore_servtd_hash);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_mrsigroot: {}\n", attr_info.ignore_mrsigroot);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_mrsigner: {}\n", attr_info.ignore_mrsigner);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_prodid: {}\n", attr_info.ignore_prodid);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_isvsvn: {}\n", attr_info.ignore_isvsvn);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_mrconfigsvn: {}\n", attr_info.ignore_mrconfigsvn);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "  - ignore_mrownerconfigsvn: {}\n", attr_info.ignore_mrownerconfigsvn);
+
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "test_servtd_attr_read: TDG.SERVTD.RD test for SERVTD_ATTR PASSED\n");
+
     Ok(())
 }
 
