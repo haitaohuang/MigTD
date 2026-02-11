@@ -78,10 +78,19 @@ pub fn read_servtd_ext(
     target_td_uuid: &[u64],
 ) -> Result<ServtdExt, MigrationResult> {
     let read_field =
-        |field_base: u64, elem_size: usize, buf: &mut [u8]| -> Result<(), MigrationResult> {
+        |field_base: u64, elem_size: usize, buf: &mut [u8], field_name: &str| -> Result<(), MigrationResult> {
             for (idx, chunk) in buf.chunks_mut(elem_size).enumerate() {
-                let result =
-                    tdcall_servtd_rd(binding_handle, field_base + idx as u64, target_td_uuid)?;
+                let field_id = field_base + idx as u64;
+                let result = match tdcall_servtd_rd(binding_handle, field_id, target_td_uuid) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        log::error!(
+                            "read_servtd_ext: TDG.SERVTD.RD failed for field '{}' (base=0x{:x}, idx={}, field_id=0x{:x}): {:?}",
+                            field_name, field_base, idx, field_id, e
+                        );
+                        return Err(e.into());
+                    }
+                };
                 let bytes = result.content.to_le_bytes();
                 chunk.copy_from_slice(&bytes[..chunk.len()]);
             }
@@ -101,13 +110,14 @@ pub fn read_servtd_ext(
         TDCS_FIELD_SERVTD_INIT_SERVTD_INFO_HASH,
         8,
         &mut init_servtd_info_hash,
+        "SERVTD_INIT_SERVTD_INFO_HASH",
     )?;
-    read_field(TDCS_FIELD_SERVTD_INIT_ATTR, 8, &mut init_attr)?;
-    read_field(TDCS_FIELD_INIT_CPUSVN, 8, &mut init_cpusvn)?;
-    read_field(TDCS_FIELD_INIT_TEE_TCB_SVN, 8, &mut init_tee_tcb_svn)?;
-    read_field(TDCS_FIELD_INIT_TEE_MODEL, 4, &mut init_tee_model)?;
-    read_field(TDCS_FIELD_SERVTD_INFO_HASH, 8, &mut cur_servtd_info_hash)?;
-    read_field(TDCS_FIELD_SERVTD_ATTR, 8, &mut cur_servtd_attr)?;
+    read_field(TDCS_FIELD_SERVTD_INIT_ATTR, 8, &mut init_attr, "SERVTD_INIT_ATTR")?;
+    read_field(TDCS_FIELD_INIT_CPUSVN, 8, &mut init_cpusvn, "INIT_CPUSVN")?;
+    read_field(TDCS_FIELD_INIT_TEE_TCB_SVN, 8, &mut init_tee_tcb_svn, "INIT_TEE_TCB_SVN")?;
+    read_field(TDCS_FIELD_INIT_TEE_MODEL, 4, &mut init_tee_model, "INIT_TEE_MODEL")?;
+    read_field(TDCS_FIELD_SERVTD_INFO_HASH, 8, &mut cur_servtd_info_hash, "SERVTD_INFO_HASH")?;
+    read_field(TDCS_FIELD_SERVTD_ATTR, 8, &mut cur_servtd_attr, "SERVTD_ATTR")?;
 
     Ok(ServtdExt {
         init_servtd_info_hash,

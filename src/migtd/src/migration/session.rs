@@ -1363,51 +1363,15 @@ impl ServtdAttrInfo {
     }
 }
 
-/// Read SERVTD_ATTR from the target TD using TDG.SERVTD.RD.
-///
-/// This function uses the TDG.SERVTD.RD TDCALL to read the SERVTD_ATTR field
-/// from the Service TD Binding Table entry in the target TD's TDCS.
-///
-/// # Arguments
-/// * `mig_info` - Migration information containing binding_handle and target_td_uuid
-///
-/// # Returns
-/// * `Ok(ServtdAttrInfo)` - The parsed SERVTD_ATTR information
-/// * `Err(MigrationResult)` - If the TDCALL fails
-///
-/// # Reference
-/// - TDX Module Base Spec section 13.4 "Target TD Metadata Access by a Service TD"
-pub fn read_servtd_attr(mig_info: &MigtdMigrationInformation) -> Result<ServtdAttrInfo> {
-    let ret = tdx::tdcall_servtd_rd(
-        mig_info.binding_handle,
-        TDCS_FIELD_SERVTD_ATTR,
-        &mig_info.target_td_uuid,
-    ).map_err(|e| {
-        log::error!(migration_request_id = mig_info.mig_request_id;
-            "read_servtd_attr: tdcall_servtd_rd failed with error: {:?} for binding_handle = {}\n",
-            e, mig_info.binding_handle);
-        MigrationResult::TdxModuleError
-    })?;
-
-    let attr_info = ServtdAttrInfo::from_raw(ret.content);
-
-    log::info!(migration_request_id = mig_info.mig_request_id;
-        "read_servtd_attr: SERVTD_ATTR = 0x{:016x}, ignore_flags = 0x{:05x}\n",
-        ret.content,
-        (ret.content >> 32) & 0x1FFFF  // Extract bits 48:32 for ignore flags
-    );
-
-    Ok(attr_info)
-}
-
-/// Test harness for TDG.SERVTD.RD reading SERVTD_ATTR for the target TD.
+/// Test harness for TDG.SERVTD.RD reading SERVTD_EXT for the target TD.
 ///
 /// This function serves as a test harness to validate the TDG.SERVTD.RD TDCALL
-/// for reading the SERVTD_ATTR field from the target TD's TDCS during pre-migration.
+/// for reading the SERVTD_EXT fields from the target TD's TDCS during pre-migration.
 ///
 /// The test performs the following:
-/// 1. Reads SERVTD_ATTR using TDG.SERVTD.RD with the binding handle from MigrationInformation
-/// 2. Logs the IGNORE flags for debugging
+/// 1. Reads SERVTD_EXT using TDG.SERVTD.RD with the binding handle from MigrationInformation
+/// 2. Logs the SERVTD_EXT fields for debugging
+/// 3. On error, prints TDX Module version info via TDG.SYS.RD
 ///
 /// # Arguments
 /// * `mig_info` - Migration information containing binding_handle and target_td_uuid
@@ -1419,8 +1383,17 @@ pub fn read_servtd_attr(mig_info: &MigtdMigrationInformation) -> Result<ServtdAt
 /// # Reference
 /// - TDX Module Base Spec section 13.4 "Target TD Metadata Access by a Service TD"
 pub fn test_servtd_attr_read(mig_info: &MigtdMigrationInformation) -> Result<()> {
+    use super::servtd_ext::read_servtd_ext;
+
+    // TDX Module global-scope metadata field identifiers for TDG.SYS.RD
+    // See TDX Module ABI Spec section 22.2 "Global-Scope Metadata Fields"
+    const SYS_TDX_MODULE_BUILD_DATE: u64 = 0x0800000200000009;
+    const SYS_TDX_MODULE_BUILD_NUM: u64 = 0x0800000200000010;
+    const SYS_TDX_MODULE_MINOR_VERSION: u64 = 0x0800000200000011;
+    const SYS_TDX_MODULE_MAJOR_VERSION: u64 = 0x0800000200000012;
+
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "test_servtd_attr_read: Starting TDG.SERVTD.RD test for SERVTD_ATTR\n");
+        "test_servtd_attr_read: Starting TDG.SERVTD.RD test for SERVTD_EXT\n");
     log::info!(migration_request_id = mig_info.mig_request_id;
         "test_servtd_attr_read: binding_handle = 0x{:x}, target_td_uuid = [{:x}, {:x}, {:x}, {:x}]\n",
         mig_info.binding_handle,
@@ -1430,53 +1403,113 @@ pub fn test_servtd_attr_read(mig_info: &MigtdMigrationInformation) -> Result<()>
         mig_info.target_td_uuid[3]
     );
 
-    // Read SERVTD_ATTR using TDG.SERVTD.RD
-    let attr_info = read_servtd_attr(mig_info)?;
+    // Read SERVTD_EXT using TDG.SERVTD.RD
+    let servtd_ext = match read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid) {
+        Ok(ext) => ext,
+        Err(e) => {
+            log::error!(migration_request_id = mig_info.mig_request_id;
+                "test_servtd_attr_read: read_servtd_ext failed with error: {:?}\n", e);
 
-    // Log detailed attribute information
-    log::info!(migration_request_id = mig_info.mig_request_id;
-        "test_servtd_attr_read: Raw SERVTD_ATTR value = 0x{:016x}\n", attr_info.raw_value);
+            // On error, print TDX Module version info via TDG.SYS.RD
+            log::info!(migration_request_id = mig_info.mig_request_id;
+                "test_servtd_attr_read: Querying TDX Module version info via TDG.SYS.RD...\n");
 
-    // Log ignore flags
+            if let Ok((_, major)) = tdcall_sys_rd(SYS_TDX_MODULE_MAJOR_VERSION) {
+                log::info!(migration_request_id = mig_info.mig_request_id;
+                    "  TDX Module Major Version: {}\n", major);
+            } else {
+                log::warn!(migration_request_id = mig_info.mig_request_id;
+                    "  Failed to read TDX Module Major Version\n");
+            }
+
+            if let Ok((_, minor)) = tdcall_sys_rd(SYS_TDX_MODULE_MINOR_VERSION) {
+                log::info!(migration_request_id = mig_info.mig_request_id;
+                    "  TDX Module Minor Version: {}\n", minor);
+            } else {
+                log::warn!(migration_request_id = mig_info.mig_request_id;
+                    "  Failed to read TDX Module Minor Version\n");
+            }
+
+            if let Ok((_, build_num)) = tdcall_sys_rd(SYS_TDX_MODULE_BUILD_NUM) {
+                log::info!(migration_request_id = mig_info.mig_request_id;
+                    "  TDX Module Build Number: {}\n", build_num);
+            } else {
+                log::warn!(migration_request_id = mig_info.mig_request_id;
+                    "  Failed to read TDX Module Build Number\n");
+            }
+
+            if let Ok((_, build_date)) = tdcall_sys_rd(SYS_TDX_MODULE_BUILD_DATE) {
+                log::info!(migration_request_id = mig_info.mig_request_id;
+                    "  TDX Module Build Date: 0x{:x}\n", build_date);
+            } else {
+                log::warn!(migration_request_id = mig_info.mig_request_id;
+                    "  Failed to read TDX Module Build Date\n");
+            }
+
+            return Err(e);
+        }
+    };
+
+    // Log SERVTD_EXT fields
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "test_servtd_attr_read: IGNORE flags:\n");
+        "test_servtd_attr_read: SERVTD_EXT read successful\n");
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_attributes: {}\n", attr_info.ignore_attributes);
+        "  - init_servtd_info_hash: {:02x?}\n", &servtd_ext.init_servtd_info_hash[..16]);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_xfam: {}\n", attr_info.ignore_xfam);
+        "  - init_attr: 0x{:016x}\n", u64::from_le_bytes(servtd_ext.init_attr));
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_mrtd: {}\n", attr_info.ignore_mrtd);
+        "  - init_cpusvn: {:02x?}\n", servtd_ext.init_cpusvn);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_mrconfigid: {}\n", attr_info.ignore_mrconfigid);
+        "  - init_tee_tcb_svn: {:02x?}\n", servtd_ext.init_tee_tcb_svn);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_mrowner: {}\n", attr_info.ignore_mrowner);
+        "  - init_tee_model: {:02x?}\n", servtd_ext.init_tee_model);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_mrownerconfig: {}\n", attr_info.ignore_mrownerconfig);
+        "  - cur_servtd_info_hash: {:02x?}\n", &servtd_ext.cur_servtd_info_hash[..16]);
+
+    // Parse and log SERVTD_ATTR flags using ServtdAttrInfo
+    let cur_servtd_attr_raw = u64::from_le_bytes(servtd_ext.cur_servtd_attr);
+    let attr_info = ServtdAttrInfo::from_raw(cur_servtd_attr_raw);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_rtmr0: {}\n", attr_info.ignore_rtmr0);
+        "  - cur_servtd_attr: 0x{:016x}\n", cur_servtd_attr_raw);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_rtmr1: {}\n", attr_info.ignore_rtmr1);
+        "    SERVTD_ATTR IGNORE flags:\n");
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_rtmr2: {}\n", attr_info.ignore_rtmr2);
+        "      ignore_attributes: {}\n", attr_info.ignore_attributes);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_rtmr3: {}\n", attr_info.ignore_rtmr3);
+        "      ignore_xfam: {}\n", attr_info.ignore_xfam);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_servtd_hash: {}\n", attr_info.ignore_servtd_hash);
+        "      ignore_mrtd: {}\n", attr_info.ignore_mrtd);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_mrsigroot: {}\n", attr_info.ignore_mrsigroot);
+        "      ignore_mrconfigid: {}\n", attr_info.ignore_mrconfigid);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_mrsigner: {}\n", attr_info.ignore_mrsigner);
+        "      ignore_mrowner: {}\n", attr_info.ignore_mrowner);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_prodid: {}\n", attr_info.ignore_prodid);
+        "      ignore_mrownerconfig: {}\n", attr_info.ignore_mrownerconfig);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_isvsvn: {}\n", attr_info.ignore_isvsvn);
+        "      ignore_rtmr0: {}\n", attr_info.ignore_rtmr0);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_mrconfigsvn: {}\n", attr_info.ignore_mrconfigsvn);
+        "      ignore_rtmr1: {}\n", attr_info.ignore_rtmr1);
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "  - ignore_mrownerconfigsvn: {}\n", attr_info.ignore_mrownerconfigsvn);
+        "      ignore_rtmr2: {}\n", attr_info.ignore_rtmr2);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "      ignore_rtmr3: {}\n", attr_info.ignore_rtmr3);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "      ignore_servtd_hash: {}\n", attr_info.ignore_servtd_hash);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "      ignore_mrsigroot: {}\n", attr_info.ignore_mrsigroot);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "      ignore_mrsigner: {}\n", attr_info.ignore_mrsigner);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "      ignore_prodid: {}\n", attr_info.ignore_prodid);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "      ignore_isvsvn: {}\n", attr_info.ignore_isvsvn);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "      ignore_mrconfigsvn: {}\n", attr_info.ignore_mrconfigsvn);
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "      ignore_mrownerconfigsvn: {}\n", attr_info.ignore_mrownerconfigsvn);
 
     log::info!(migration_request_id = mig_info.mig_request_id;
-        "test_servtd_attr_read: TDG.SERVTD.RD test for SERVTD_ATTR PASSED\n");
+        "test_servtd_attr_read: TDG.SERVTD.RD test for SERVTD_EXT PASSED\n");
 
     Ok(())
 }

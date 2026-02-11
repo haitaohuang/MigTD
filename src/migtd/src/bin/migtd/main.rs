@@ -68,6 +68,23 @@ fn dump_td_info_and_hash() {
         td_report.as_bytes().len()
     );
 
+    // TDX model related information
+    let report_mac = &td_report.report_mac;
+    info!(
+        "TDX Report Type: type=0x{:02x}, subtype=0x{:02x}, version=0x{:02x}\n",
+        report_mac.report_type.r#type,
+        report_mac.report_type.subtype,
+        report_mac.report_type.version
+    );
+    info!("CPU SVN: {:02x?}\n", report_mac.cpu_svn);
+
+    // TEE TCB Info
+    let tee_tcb_info = &td_report.tee_tcb_info;
+    info!("TEE TCB SVN: {:02x?}\n", tee_tcb_info.tee_tcb_svn);
+    info!("MR SEAM: {:02x?}\n", tee_tcb_info.mrseam);
+    info!("MR Signer SEAM: {:02x?}\n", tee_tcb_info.mrsigner_seam);
+    info!("TEE TCB Attributes: {:02x?}\n", tee_tcb_info.attributes);
+
     info!("td_info: {:?}\n", td_report.td_info);
     let mut hasher = Sha384::new();
     hasher.update(td_report.td_info.as_bytes());
