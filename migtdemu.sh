@@ -56,6 +56,10 @@ show_usage() {
     echo "  --policy-file FILE           Set policy file path (default: config/policy.json)"
     echo "  --root-ca-file FILE          Set root CA file path (default: config/Intel_SGX_Provisioning_Certification_RootCA.cer)"
     echo "  --policy-issuer-chain-file FILE Set policy issuer chain file path (required when using --policy-v2)"
+    echo "  --src-policy-file FILE       Set source-specific policy file (overrides --policy-file for source)"
+    echo "  --src-policy-issuer-chain-file FILE Set source-specific policy issuer chain file"
+    echo "  --dst-policy-file FILE       Set destination-specific policy file (overrides --policy-file for destination)"
+    echo "  --dst-policy-issuer-chain-file FILE Set destination-specific policy issuer chain file"
     echo "  --debug                      Build in debug mode (default: release)"
     echo "  --release                    Build in release mode (default)"
     echo "  --policy-v2                  Enable policy v2 support (requires --policy-file and --policy-issuer-chain-file to be specified)"
@@ -215,7 +219,11 @@ DEST_IP="$DEFAULT_DEST_IP"
 DEST_PORT="$DEFAULT_DEST_PORT"
 POLICY_FILE="$DEFAULT_POLICY_FILE"
 ROOT_CA_FILE="$DEFAULT_ROOT_CA_FILE"
-POLICY_ISSUER_CHAIN_FILE=""  # No default - mandatory when using --policy-v2 for migration
+POLICY_ISSUER_CHAIN_FILE=""  # No default - mandatory when using --policy-v2
+SRC_POLICY_FILE=""          # Per-side overrides (optional)
+SRC_POLICY_ISSUER_CHAIN_FILE=""
+DST_POLICY_FILE=""
+DST_POLICY_ISSUER_CHAIN_FILE=""
 BUILD_MODE="$DEFAULT_BUILD_MODE"
 NUM_CPUS="$DEFAULT_NUM_CPUS"
 OPERATION="$DEFAULT_OPERATION"
@@ -255,6 +263,22 @@ while [[ $# -gt 0 ]]; do
         --policy-issuer-chain-file)
             POLICY_ISSUER_CHAIN_FILE="$2"
             EXPLICIT_POLICY_ISSUER_CHAIN=true
+            shift 2
+            ;;
+        --src-policy-file)
+            SRC_POLICY_FILE="$2"
+            shift 2
+            ;;
+        --src-policy-issuer-chain-file)
+            SRC_POLICY_ISSUER_CHAIN_FILE="$2"
+            shift 2
+            ;;
+        --dst-policy-file)
+            DST_POLICY_FILE="$2"
+            shift 2
+            ;;
+        --dst-policy-issuer-chain-file)
+            DST_POLICY_ISSUER_CHAIN_FILE="$2"
             shift 2
             ;;
         --debug)
@@ -426,17 +450,26 @@ fi
 
 # Validate policy v2 requirements
 if [[ "$USE_POLICY_V2" == true ]]; then
-    if [[ "$POLICY_FILE" == "$DEFAULT_POLICY_FILE" ]]; then
+    if [[ "$POLICY_FILE" == "$DEFAULT_POLICY_FILE" && -z "$SRC_POLICY_FILE" && -z "$DST_POLICY_FILE" ]]; then
         echo -e "${RED}Error: When using --policy-v2, you must explicitly specify a policy file with --policy-file${NC}" >&2
         echo -e "${YELLOW}Example: $0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both${NC}" >&2
         exit 1
     fi
-    if [[ -z "$POLICY_ISSUER_CHAIN_FILE" ]]; then
+    if [[ -z "$POLICY_ISSUER_CHAIN_FILE" && -z "$SRC_POLICY_ISSUER_CHAIN_FILE" && -z "$DST_POLICY_ISSUER_CHAIN_FILE" ]]; then
         echo -e "${RED}Error: When using --policy-v2, you must specify a policy issuer chain file with --policy-issuer-chain-file${NC}" >&2
         echo -e "${YELLOW}Example: $0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both${NC}" >&2
         exit 1
     fi
 fi
+
+# Resolve per-side policy files (fall back to shared values)
+EFFECTIVE_SRC_POLICY_FILE="${SRC_POLICY_FILE:-$POLICY_FILE}"
+EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE="${SRC_POLICY_ISSUER_CHAIN_FILE:-$POLICY_ISSUER_CHAIN_FILE}"
+EFFECTIVE_DST_POLICY_FILE="${DST_POLICY_FILE:-$POLICY_FILE}"
+EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE="${DST_POLICY_ISSUER_CHAIN_FILE:-$POLICY_ISSUER_CHAIN_FILE}"
+
+# Change to MigTD directory
+cd "$(dirname "$0")"
 
 # Build features string based on configuration
 build_features_string() {
@@ -477,14 +510,15 @@ else
 fi
 
 # Check if configuration files exist
-check_file "$POLICY_FILE" "Policy"
-if [[ "$USE_POLICY_V2" != true ]]; then
+check_file "$EFFECTIVE_SRC_POLICY_FILE" "Source Policy"
+check_file "$EFFECTIVE_DST_POLICY_FILE" "Destination Policy"
+check_file "$ROOT_CA_FILE" "Root CA"
+if [[ "$USE_POLICY_V2" == true ]]; then
+    check_file "$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE" "Source Policy Issuer Chain"
+    check_file "$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE" "Destination Policy Issuer Chain"
+else
     check_file "$ROOT_CA_FILE" "Root CA"
 fi
-if [[ "$USE_POLICY_V2" == true ]]; then
-    check_file "$POLICY_ISSUER_CHAIN_FILE" "Policy Issuer Chain"
-fi
-
 # Evaluate TPM access and elevate if necessary
 maybe_force_sudo_due_to_tpm
 
@@ -588,8 +622,12 @@ echo "  Policy file: $POLICY_FILE"
 if [[ "$USE_POLICY_V2" != true ]]; then
     echo "  Root CA file: $ROOT_CA_FILE"
 fi
-if [[ "$USE_POLICY_V2" == true ]]; then
-    echo "  Policy Issuer Chain file: $POLICY_ISSUER_CHAIN_FILE"
+
+if [[ -n "$SRC_POLICY_FILE" || -n "$DST_POLICY_FILE" ]]; then
+    echo "  Source policy file: $EFFECTIVE_SRC_POLICY_FILE"
+    echo "  Source issuer chain: $EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE"
+    echo "  Dest policy file: $EFFECTIVE_DST_POLICY_FILE"
+    echo "  Dest issuer chain: $EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE"
 fi
 if [[ -n "$MOCK_QUOTE_FILE" ]]; then
     echo "  Mock Quote file: $MOCK_QUOTE_FILE"
@@ -629,10 +667,10 @@ if [[ "$RUN_BOTH" == true ]]; then
     DEST_OUT_LOG="dest_${OPERATION}_out.log"
 
     # Build environment variable list for destination
-    DEST_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=$DEST_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    DEST_ENV_VARS=("MIGTD_POLICY_FILE=$EFFECTIVE_DST_POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=$DEST_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
     if [[ "$USE_POLICY_V2" != true ]]; then
         DEST_ENV_VARS+=("MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE")
-    fi
+    fi    
     if [[ -n "$TSS2_TCTI_AUTO" ]]; then
         DEST_ENV_VARS+=("TSS2_TCTI=$TSS2_TCTI_AUTO")
     fi
@@ -671,7 +709,7 @@ if [[ "$RUN_BOTH" == true ]]; then
     SRC_LOG_FILE="migtd_${OPERATION}_source.log"
 
     # Build environment variable list for source
-    SRC_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=$SRC_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    SRC_ENV_VARS=("MIGTD_POLICY_FILE=$EFFECTIVE_SRC_POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=$SRC_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
     if [[ "$USE_POLICY_V2" != true ]]; then
         SRC_ENV_VARS+=("MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE")
     fi
@@ -729,8 +767,12 @@ else
 
     echo -e "${BLUE}Starting MigTD  ($OPERATION) in $ROLE mode...${NC}"
 
-    # Build environment variable list
-    ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    # Build environment variable list (use per-side values based on role)
+    if [[ "$ROLE" == "source" ]]; then
+        ENV_VARS=("MIGTD_POLICY_FILE=$EFFECTIVE_SRC_POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    else
+        ENV_VARS=("MIGTD_POLICY_FILE=$EFFECTIVE_DST_POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    fi
     if [[ "$USE_POLICY_V2" != true ]]; then
         ENV_VARS+=("MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE")
     fi
