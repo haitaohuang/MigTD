@@ -10,7 +10,7 @@ use crate::migration::rebinding::{
 #[cfg(feature = "policy_v2")]
 use crate::migration::servtd_ext::{write_approved_servtd_ext_hash, ServtdExt};
 use crate::{
-    config::get_policy,
+    config::{get_policy, get_policy_issuer_chain},
     event_log::get_event_log,
     migration::{
         data::MigrationSessionKey,
@@ -50,6 +50,7 @@ extern crate alloc;
 pub struct ResponderContextEx<'a> {
     pub responder_context: ResponderContext,
     pub remote_policy: Vec<u8>,
+    pub peer_issuer_chain: Vec<u8>,
     pub info: ResponderContextExInfo<'a>,
     #[cfg(feature = "policy_v2")]
     pub servtd_ext: Option<ServtdExt>,
@@ -138,6 +139,7 @@ pub fn spdm_responder<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'sta
     let responder_context_ex = ResponderContextEx {
         responder_context,
         remote_policy: Vec::new(),
+        peer_issuer_chain: Vec::new(),
         info: ResponderContextExInfo::None,
         #[cfg(feature = "policy_v2")]
         servtd_ext: None,
@@ -150,11 +152,15 @@ pub async fn spdm_responder_transfer_msk(
     spdm_responder_ex: &mut ResponderContextEx<'_>,
     mig_info: &MigtdMigrationInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_issuer_chain: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     #[cfg(not(feature = "policy_v2"))]
     let remote_policy = Vec::new();
+    #[cfg(not(feature = "policy_v2"))]
+    let peer_issuer_chain = Vec::new();
 
     spdm_responder_ex.remote_policy = remote_policy;
+    spdm_responder_ex.peer_issuer_chain = peer_issuer_chain;
 
     let spdm_responder = &mut spdm_responder_ex.responder_context;
     let mut writer = Writer::init(&mut spdm_responder.common.app_context_data_buffer);
@@ -540,15 +546,19 @@ pub fn handle_exchange_mig_attest_info_req(
 
     #[cfg(feature = "policy_v2")]
     {
-        let remote_policy = unsafe {
+        let (remote_policy, peer_chain) = unsafe {
             let spdm_responder_ex = upcast_mut(responder_context);
-            spdm_responder_ex.remote_policy.clone()
+            (
+                spdm_responder_ex.remote_policy.clone(),
+                spdm_responder_ex.peer_issuer_chain.clone(),
+            )
         };
         rsp_verify_peer_attestation_v2(
             &quote_src_vec,
             &event_log_src_vec,
             &mig_policy_hash_src,
             &remote_policy,
+            &peer_chain,
             &th1,
             responder_context,
             session_id,
@@ -677,6 +687,7 @@ fn rsp_verify_peer_attestation_v2(
     event_log_peer: &[u8],
     mig_policy_hash_peer: &[u8],
     remote_policy: &[u8],
+    peer_issuer_chain: &[u8],
     th1: &SpdmDigestStruct,
     responder_context: &mut ResponderContext,
     session_id: u32,
@@ -691,8 +702,13 @@ fn rsp_verify_peer_attestation_v2(
     // 2. Authenticate remote (includes quote verification internally)
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
-        let policy_check_result =
-            mig_policy::authenticate_remote(false, quote_peer, remote_policy, event_log_peer);
+        let policy_check_result = mig_policy::authenticate_remote(
+            false,
+            quote_peer,
+            remote_policy,
+            event_log_peer,
+            peer_issuer_chain,
+        );
         if let Err(e) = &policy_check_result {
             error!("Policy v2 check failed, below is the detail information:\n");
             error!("{:x?}\n", e);
@@ -1135,10 +1151,12 @@ pub fn handle_exchange_rebind_attest_info_req(
             return Err(SPDM_STATUS_INVALID_MSG_FIELD);
         }
 
+        let peer_issuer_chain = get_policy_issuer_chain().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
         let policy_check_result = mig_policy::authenticate_rebinding_old(
             &td_report_src_vec,
             &event_log_src_vec,
             remote_policy,
+            peer_issuer_chain,
             &td_report_init_vec,
             &event_log_init_vec,
             &servtd_ext_vec,

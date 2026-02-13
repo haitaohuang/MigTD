@@ -9,7 +9,7 @@ use async_io::{AsyncRead, AsyncWrite};
 type Result<T> = core::result::Result<T, MigrationResult>;
 
 #[repr(C)]
-pub(super) struct PreSessionMessage {
+struct PreSessionMessage {
     pub r#type: u8,
     pub reserved: [u8; 3],
     pub length: u32, // Length in bytes of the message payload
@@ -318,11 +318,18 @@ pub(super) async fn exchange_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
         .ok_or(MigrationResult::InvalidParameter)
 }
 
+/// Peer's policy and issuer chain received during pre-session exchange.
+pub(super) struct PeerPreSessionData {
+    pub policy: Vec<u8>,
+    pub issuer_chain: Vec<u8>,
+}
+
 #[cfg(feature = "policy_v2")]
 pub(super) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
-    pre_session_data: &[u8],
-) -> Result<Vec<u8>> {
+    policy: &[u8],
+    issuer_chain: &[u8],
+) -> Result<PeerPreSessionData> {
     let version = exchange_hello_packet(transport).await.map_err(|e| {
         log::error!(
             "pre_session_data_exchange: exchange_hello_packet error: {:?}\n",
@@ -332,39 +339,19 @@ pub(super) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>
     })?;
     log::info!("Pre-Session-Message Version: 0x{:04x}\n", version);
 
-    send_pre_session_data_packet(pre_session_data, transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-    let remote_policy = receive_pre_session_data_packet(transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
+    // Send local policy and issuer chain
+    send_pre_session_data_packet(policy, transport).await?;
+    send_pre_session_data_packet(issuer_chain, transport).await?;
 
-    send_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: send_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    receive_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: receive_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
+    // Receive peer's policy and issuer chain
+    let peer_policy = receive_pre_session_data_packet(transport).await?;
+    let peer_issuer_chain = receive_pre_session_data_packet(transport).await?;
 
-    Ok(remote_policy)
+    send_start_session_packet(transport).await?;
+    receive_start_session_packet(transport).await?;
+
+    Ok(PeerPreSessionData {
+        policy: peer_policy,
+        issuer_chain: peer_issuer_chain,
+    })
 }

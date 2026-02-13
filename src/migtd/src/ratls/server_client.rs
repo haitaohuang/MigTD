@@ -24,6 +24,29 @@ use verify::*;
 
 type Result<T> = core::result::Result<T, RatlsError>;
 
+/// Bundle peer policy and issuer chain for the TLS verify callback.
+/// Format: [4-byte LE policy length][policy bytes][issuer chain bytes]
+#[cfg(feature = "policy_v2")]
+fn encode_peer_data(policy: &[u8], issuer_chain: &[u8]) -> Vec<u8> {
+    let mut data = Vec::with_capacity(4 + policy.len() + issuer_chain.len());
+    data.extend_from_slice(&(policy.len() as u32).to_le_bytes());
+    data.extend_from_slice(policy);
+    data.extend_from_slice(issuer_chain);
+    data
+}
+
+#[cfg(feature = "policy_v2")]
+fn decode_peer_data(data: &[u8]) -> core::result::Result<(&[u8], &[u8]), CryptoError> {
+    if data.len() < 4 {
+        return Err(CryptoError::ParseCertificate);
+    }
+    let policy_len = u32::from_le_bytes(data[..4].try_into().unwrap()) as usize;
+    if data.len() < 4 + policy_len {
+        return Err(CryptoError::ParseCertificate);
+    }
+    Ok((&data[4..4 + policy_len], &data[4 + policy_len..]))
+}
+
 #[cfg(not(feature = "policy_v2"))]
 pub fn server<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
@@ -51,8 +74,10 @@ pub fn server<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChan
 #[cfg(feature = "policy_v2")]
 pub fn server<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
-    remote_policy: Vec<u8>,
+    peer_policy: Vec<u8>,
+    peer_issuer_chain: Vec<u8>,
 ) -> Result<SecureChannel<T>> {
+    let peer_data = encode_peer_data(&peer_policy, &peer_issuer_chain);
     let signing_key = EcdsaPk::new().map_err(|e| {
         log::error!(
             "server policy_v2 EcdsaPk::new() failed with error {:?}\n",
@@ -71,7 +96,7 @@ pub fn server<T: AsyncRead + AsyncWrite + Unpin>(
         certs,
         signing_key,
         move |cert, quote| verify_client_cert(cert, quote),
-        remote_policy,
+        peer_data,
     )
     .map_err(|e| {
         log::error!(
@@ -115,8 +140,10 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChan
 #[cfg(feature = "policy_v2")]
 pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
-    remote_policy: Vec<u8>,
+    peer_policy: Vec<u8>,
+    peer_issuer_chain: Vec<u8>,
 ) -> Result<SecureChannel<T>> {
+    let peer_data = encode_peer_data(&peer_policy, &peer_issuer_chain);
     let signing_key = EcdsaPk::new().map_err(|e| {
         log::error!(
             "client policy_v2 EcdsaPk::new() failed with error {:?}\n",
@@ -132,7 +159,7 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
 
     // Client verifies certificate of server
     let config =
-        TlsConfig::new(certs, signing_key, verify_server_cert, remote_policy).map_err(|e| {
+        TlsConfig::new(certs, signing_key, verify_server_cert, peer_data).map_err(|e| {
             log::error!(
                 "client policy_v2 TlsConfig::new() failed with error {:?}\n",
                 e
@@ -149,8 +176,18 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
 #[cfg(feature = "policy_v2")]
 pub fn server_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
-    remote_policy: Vec<u8>,
+    peer_policy: Vec<u8>,
+    peer_issuer_chain: Vec<u8>,
+    init_tdinfo: Vec<u8>,
 ) -> Result<SecureChannel<T>> {
+    // Bundle: [4-byte policy len][policy][4-byte init_tdinfo len][init_tdinfo][issuer_chain]
+    let mut peer_data =
+        Vec::with_capacity(8 + peer_policy.len() + init_tdinfo.len() + peer_issuer_chain.len());
+    peer_data.extend_from_slice(&(peer_policy.len() as u32).to_le_bytes());
+    peer_data.extend_from_slice(&peer_policy);
+    peer_data.extend_from_slice(&(init_tdinfo.len() as u32).to_le_bytes());
+    peer_data.extend_from_slice(&init_tdinfo);
+    peer_data.extend_from_slice(&peer_issuer_chain);
     let signing_key = EcdsaPk::new().map_err(|e| {
         log::error!(
             "server rebinding EcdsaPk::new() failed with error {:?}\n",
@@ -164,8 +201,8 @@ pub fn server_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     })?;
     let certs = vec![certs];
 
-    let config = TlsConfig::new(certs, signing_key, verify_rebinding_old_cert, remote_policy)
-        .map_err(|e| {
+    let config =
+        TlsConfig::new(certs, signing_key, verify_rebinding_old_cert, peer_data).map_err(|e| {
             log::error!(
                 "server rebinding TlsConfig::new() failed with error {:?}\n",
                 e
@@ -182,7 +219,8 @@ pub fn server_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
 #[cfg(feature = "policy_v2")]
 pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
-    remote_policy: Vec<u8>,
+    peer_policy: Vec<u8>,
+    peer_issuer_chain: Vec<u8>,
     init_policy_hash: &[u8],
     init_tdinfo: &[u8],
     init_event_log: &[u8],
@@ -208,8 +246,9 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     })?;
     let certs = vec![certs];
 
-    let config = TlsConfig::new(certs, signing_key, verify_rebinding_new_cert, remote_policy)
-        .map_err(|e| {
+    let peer_data = encode_peer_data(&peer_policy, &peer_issuer_chain);
+    let config =
+        TlsConfig::new(certs, signing_key, verify_rebinding_new_cert, peer_data).map_err(|e| {
             log::error!(
                 "client rebinding TlsConfig::new() failed with error {:?}\n",
                 e
@@ -900,8 +939,10 @@ mod verify {
     pub fn verify_peer_cert(
         is_client: bool,
         cert: &[u8],
-        policy: &[u8],
+        peer_data: &[u8],
     ) -> core::result::Result<(), CryptoError> {
+        let (policy, peer_issuer_chain) = decode_peer_data(peer_data)?;
+
         let cert = Certificate::from_der(cert).map_err(|_| {
             log::error!("Failed to parse certificate from DER.\n");
             CryptoError::ParseCertificate
@@ -940,8 +981,13 @@ mod verify {
             ));
         }
         // MigTD-src acts as TLS client
-        let policy_check_result =
-            mig_policy::authenticate_remote(is_client, quote_report, policy, event_log);
+        let policy_check_result = mig_policy::authenticate_remote(
+            is_client,
+            quote_report,
+            policy,
+            event_log,
+            peer_issuer_chain,
+        );
 
         if let Err(e) = &policy_check_result {
             log::error!("Policy check failed, below is the detail information:\n");
@@ -965,8 +1011,25 @@ mod verify {
     #[cfg(feature = "policy_v2")]
     pub fn verify_rebinding_old_cert(
         cert: &[u8],
-        pre_session_data: &[u8],
+        peer_data: &[u8],
     ) -> core::result::Result<(), CryptoError> {
+        // Decode: [4-byte policy len][policy][4-byte init_tdinfo len][init_tdinfo][issuer_chain]
+        if peer_data.len() < 4 {
+            return Err(CryptoError::ParseCertificate);
+        }
+        let policy_len = u32::from_le_bytes(peer_data[..4].try_into().unwrap()) as usize;
+        if peer_data.len() < 8 + policy_len {
+            return Err(CryptoError::ParseCertificate);
+        }
+        let remote_policy = &peer_data[4..4 + policy_len];
+        let rest = &peer_data[4 + policy_len..];
+        let init_tdinfo_len = u32::from_le_bytes(rest[..4].try_into().unwrap()) as usize;
+        if rest.len() < 4 + init_tdinfo_len {
+            return Err(CryptoError::ParseCertificate);
+        }
+        let _init_tdinfo_from_peer = &rest[4..4 + init_tdinfo_len];
+        let peer_issuer_chain = &rest[4 + init_tdinfo_len..];
+
         let cert = Certificate::from_der(cert).map_err(|_| {
             log::error!("Failed to parse certificate from DER.\n");
             CryptoError::ParseCertificate
@@ -1017,35 +1080,6 @@ mod verify {
             CryptoError::ParseCertificate
         })?;
 
-        // Parse pre_session_data: [remote_policy_size(4) | remote_policy | init_tdinfo_size(4) | init_tdinfo]
-        let remote_policy_size = u32::from_le_bytes(
-            pre_session_data
-                .get(..4)
-                .ok_or(CryptoError::TlsVerifyPeerCert(
-                    INVALID_MIG_POLICY_ERROR.to_string(),
-                ))?
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let remote_policy = pre_session_data.get(4..4 + remote_policy_size).ok_or(
-            CryptoError::TlsVerifyPeerCert(INVALID_MIG_POLICY_ERROR.to_string()),
-        )?;
-        // Per GHCI 1.5: second item is init_tdinfo (was init_policy)
-        let init_tdinfo_offset = 4 + remote_policy_size;
-        let init_tdinfo_size = u32::from_le_bytes(
-            pre_session_data
-                .get(init_tdinfo_offset..4 + init_tdinfo_offset)
-                .ok_or(CryptoError::TlsVerifyPeerCert(
-                    INVALID_MIG_POLICY_ERROR.to_string(),
-                ))?
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let _init_tdinfo_from_pre_session = pre_session_data
-            .get(init_tdinfo_offset + 4..init_tdinfo_offset + 4 + init_tdinfo_size)
-            .ok_or(CryptoError::TlsVerifyPeerCert(
-                INVALID_MIG_POLICY_ERROR.to_string(),
-            ))?;
         let exact_policy_hash = digest_sha384(remote_policy)?;
         if expected_policy_hash != exact_policy_hash.as_slice() {
             log::error!("Invalid rebinding policy.\n");
@@ -1066,6 +1100,7 @@ mod verify {
             td_report,
             event_log,
             remote_policy,
+            peer_issuer_chain,
             init_tdinfo,
             init_event_log,
             servtd_ext,
@@ -1093,8 +1128,10 @@ mod verify {
     #[cfg(feature = "policy_v2")]
     pub fn verify_rebinding_new_cert(
         cert: &[u8],
-        policy: &[u8],
+        peer_data: &[u8],
     ) -> core::result::Result<(), CryptoError> {
+        let (policy, peer_issuer_chain) = decode_peer_data(peer_data)?;
+
         let cert = Certificate::from_der(cert).map_err(|_| {
             log::error!("Failed to parse certificate from DER.\n");
             CryptoError::ParseCertificate
@@ -1133,7 +1170,7 @@ mod verify {
         }
 
         let policy_check_result =
-            mig_policy::authenticate_rebinding_new(td_report, event_log, policy);
+            mig_policy::authenticate_rebinding_new(td_report, event_log, policy, peer_issuer_chain);
 
         if let Err(e) = &policy_check_result {
             log::error!("Policy check failed, below is the detail information:\n");

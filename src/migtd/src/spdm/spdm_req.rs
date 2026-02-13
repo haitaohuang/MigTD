@@ -29,7 +29,9 @@ use spdmlib::{
 use spin::Mutex;
 extern crate alloc;
 use crate::{
-    config::get_policy, event_log::get_event_log, migration::session::ExchangeInformation,
+    config::{get_policy, get_policy_issuer_chain},
+    event_log::get_event_log,
+    migration::session::ExchangeInformation,
 };
 use alloc::sync::Arc;
 use log::error;
@@ -91,6 +93,7 @@ pub async fn spdm_requester_transfer_msk(
     spdm_requester: &mut RequesterContext,
     mig_info: &MigtdMigrationInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_issuer_chain: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     Box::pin(spdm_requester.send_receive_spdm_version()).await?;
     Box::pin(spdm_requester.send_receive_spdm_capability()).await?;
@@ -109,6 +112,8 @@ pub async fn spdm_requester_transfer_msk(
         session_id,
         #[cfg(feature = "policy_v2")]
         remote_policy,
+        #[cfg(feature = "policy_v2")]
+        peer_issuer_chain,
     ))
     .await?;
 
@@ -297,6 +302,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     mig_info: &MigtdMigrationInformation,
     session_id: u32,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_issuer_chain: Vec<u8>,
 ) -> SpdmResult {
     if spdm_requester.common.provision_info.my_pub_key.is_none()
         || spdm_requester.common.provision_info.peer_pub_key.is_none()
@@ -560,6 +566,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         &event_log_dst_vec,
         mig_policy_hash_dst,
         &remote_policy,
+        &peer_issuer_chain,
         &th1,
         spdm_requester,
         session_id,
@@ -650,6 +657,7 @@ fn verify_peer_attestation_v2(
     event_log_peer: &[u8],
     mig_policy_hash_peer: &[u8],
     remote_policy: &[u8],
+    peer_issuer_chain: &[u8],
     th1: &SpdmDigestStruct,
     spdm_requester: &mut RequesterContext,
     session_id: u32,
@@ -664,8 +672,13 @@ fn verify_peer_attestation_v2(
     // 2. Authenticate remote (includes quote verification internally)
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
-        let policy_check_result =
-            mig_policy::authenticate_remote(true, quote_peer, remote_policy, event_log_peer);
+        let policy_check_result = mig_policy::authenticate_remote(
+            true,
+            quote_peer,
+            remote_policy,
+            event_log_peer,
+            peer_issuer_chain,
+        );
         if let Err(e) = &policy_check_result {
             error!("Policy v2 check failed, below is the detail information:\n");
             error!("{:x?}\n", e);
@@ -1167,10 +1180,12 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
             return Err(SPDM_STATUS_INVALID_MSG_FIELD);
         }
 
+        let peer_issuer_chain = get_policy_issuer_chain().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
         let policy_check_result = mig_policy::authenticate_rebinding_new(
             &td_report_dst_vec,
             &event_log_dst_vec,
             &remote_policy,
+            peer_issuer_chain,
         );
 
         if let Err(e) = &policy_check_result {
