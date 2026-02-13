@@ -26,6 +26,7 @@ pub async fn spdm_requester_rebind_old(
     spdm_requester: &mut RequesterContext,
     rebind_info: &RebindingInfo,
     remote_policy: Vec<u8>,
+    peer_issuer_chain: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     Box::pin(spdm_requester.send_receive_spdm_version()).await?;
     Box::pin(spdm_requester.send_receive_spdm_capability()).await?;
@@ -43,6 +44,7 @@ pub async fn spdm_requester_rebind_old(
         rebind_info,
         session_id,
         remote_policy,
+        peer_issuer_chain,
     ))
     .await?;
 
@@ -63,8 +65,10 @@ pub async fn spdm_responder_rebind_new<'a>(
     spdm_responder_ex: &mut ResponderContextEx<'a>,
     rebind_info: &'a RebindingInfo,
     remote_policy: Vec<u8>,
+    peer_issuer_chain: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     spdm_responder_ex.remote_policy = remote_policy;
+    spdm_responder_ex.peer_issuer_chain = peer_issuer_chain;
     spdm_responder_ex.info = ResponderContextExInfo::RebindInformation(rebind_info);
 
     let spdm_responder = &mut spdm_responder_ex.responder_context;

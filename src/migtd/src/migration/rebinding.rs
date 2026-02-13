@@ -22,7 +22,7 @@ use crate::{
     config,
     migration::pre_session_data::{
         exchange_hello_packet, receive_pre_session_data_packet, receive_start_session_packet,
-        send_pre_session_data_packet, send_start_session_packet,
+        send_pre_session_data_packet, send_start_session_packet, PeerPreSessionData,
     },
 };
 
@@ -240,7 +240,7 @@ impl<'a> MigtdDataEntry<'a> {
 
 pub(super) async fn rebinding_old_pre_session_data_exchange(
     transport: &mut TransportType,
-) -> Result<Vec<u8>, MigrationResult> {
+) -> Result<PeerPreSessionData, MigrationResult> {
     let version = exchange_hello_packet(transport).await.map_err(|e| {
         log::error!(
             "pre_session_data_exchange: exchange_hello_packet error: {:?}\n",
@@ -250,107 +250,52 @@ pub(super) async fn rebinding_old_pre_session_data_exchange(
     })?;
     log::info!("Pre-Session-Message Version: 0x{:04x}\n", version);
 
-    let policy = config::get_policy()
-        .ok_or(MigrationResult::InvalidParameter)
-        .map_err(|e| {
-            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
-            e
-        })?;
-    send_pre_session_data_packet(policy, transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-    let remote_policy = receive_pre_session_data_packet(transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
+    let policy = config::get_policy().ok_or(MigrationResult::InvalidParameter)?;
+    let issuer_chain =
+        config::get_policy_issuer_chain().ok_or(MigrationResult::InvalidParameter)?;
 
+    // Send: policy, issuer chain,
+    send_pre_session_data_packet(policy, transport).await?;
+    send_pre_session_data_packet(issuer_chain, transport).await?;
 
-    send_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: send_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    receive_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: receive_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
+    // Receive: peer policy, peer issuer chain
+    let remote_policy = receive_pre_session_data_packet(transport).await?;
+    let remote_issuer_chain = receive_pre_session_data_packet(transport).await?;
 
-    Ok(remote_policy)
+    send_start_session_packet(transport).await?;
+    receive_start_session_packet(transport).await?;
+
+    Ok(PeerPreSessionData {
+        policy: remote_policy,
+        issuer_chain: remote_issuer_chain,
+    })
 }
 
 pub(super) async fn rebinding_new_pre_session_data_exchange(
     transport: &mut TransportType,
-) -> Result<Vec<u8>, MigrationResult> {
-    let version = exchange_hello_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: exchange_hello_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
+) -> Result<PeerPreSessionData, MigrationResult> {
+    let version = exchange_hello_packet(transport).await?;
     log::info!("Pre-Session-Message Version: 0x{:04x}\n", version);
 
-    let policy = config::get_policy()
-        .ok_or(MigrationResult::InvalidParameter)
-        .map_err(|e| {
-            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
-            e
-        })?;
-    send_pre_session_data_packet(policy, transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-    let remote_policy = receive_pre_session_data_packet(transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
+    let policy = config::get_policy().ok_or(MigrationResult::InvalidParameter)?;
+    let issuer_chain =
+        config::get_policy_issuer_chain().ok_or(MigrationResult::InvalidParameter)?;
 
-    send_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: send_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    receive_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: receive_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
+    // Send: policy, issuer chain
+    send_pre_session_data_packet(policy, transport).await?;
+    send_pre_session_data_packet(issuer_chain, transport).await?;
 
-    let mut policy_buffer = Vec::new();
-    policy_buffer.extend_from_slice(&(remote_policy.len() as u32).to_le_bytes());
-    policy_buffer.extend_from_slice(&remote_policy);
+    // Receive: peer policy, peer issuer chain
+    let remote_policy = receive_pre_session_data_packet(transport).await?;
+    let remote_issuer_chain = receive_pre_session_data_packet(transport).await?;
 
-    Ok(policy_buffer)
+    send_start_session_packet(transport).await?;
+    receive_start_session_packet(transport).await?;
+
+    Ok(PeerPreSessionData {
+        policy: remote_policy,
+        issuer_chain: remote_issuer_chain,
+    })
 }
 
 pub async fn start_rebinding(
@@ -369,7 +314,7 @@ pub async fn start_rebinding(
             .as_ref()
             .or(Some(&local_data))
             .ok_or(MigrationResult::InvalidParameter)?;
-        let remote_policy = Box::pin(with_timeout(
+        let peer_data = Box::pin(with_timeout(
             PRE_SESSION_TIMEOUT,
             rebinding_old_pre_session_data_exchange(&mut transport),
         ))
@@ -389,7 +334,7 @@ pub async fn start_rebinding(
             e
         })?;
         #[cfg(not(feature = "spdm_attestation"))]
-        rebinding_old_prepare(transport, info, &init_migtd_data, data, remote_policy).await?;
+        rebinding_old_prepare(transport, info, &init_migtd_data, data, peer_data).await?;
 
         #[cfg(feature = "spdm_attestation")]
         rebinding_old_prepare(
@@ -397,11 +342,11 @@ pub async fn start_rebinding(
             info,
             data,
             #[cfg(feature = "policy_v2")]
-            remote_policy,
+            peer_data,
         )
         .await?;
     } else {
-        let pre_session_data = Box::pin(with_timeout(
+        let peer_data = Box::pin(with_timeout(
             PRE_SESSION_TIMEOUT,
             rebinding_new_pre_session_data_exchange(&mut transport),
         ))
@@ -422,7 +367,7 @@ pub async fn start_rebinding(
         })?;
 
         #[cfg(not(feature = "spdm_attestation"))]
-        rebinding_new_prepare(transport, info, data, pre_session_data).await?;
+        rebinding_new_prepare(transport, info, data, peer_data).await?;
 
         #[cfg(feature = "spdm_attestation")]
         rebinding_new_prepare(
@@ -430,7 +375,7 @@ pub async fn start_rebinding(
             info,
             data,
             #[cfg(feature = "policy_v2")]
-            pre_session_data,
+            peer_data,
         )
         .await?;
     }
@@ -453,7 +398,7 @@ pub async fn rebinding_old_prepare(
     transport: TransportType,
     info: &RebindingInfo,
     _data: &mut Vec<u8>,
-    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_data: PeerPreSessionData,
 ) -> Result<(), MigrationResult> {
     use core::ops::DerefMut;
 
@@ -471,7 +416,9 @@ pub async fn rebinding_old_prepare(
             &mut spdm_requester,
             info,
             #[cfg(feature = "policy_v2")]
-            remote_policy,
+            peer_data.policy,
+            #[cfg(feature = "policy_v2")]
+            peer_data.issuer_chain,
         ),
     )
     .await
@@ -499,7 +446,7 @@ pub async fn rebinding_new_prepare(
     transport: TransportType,
     info: &RebindingInfo,
     _data: &mut Vec<u8>,
-    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_data: PeerPreSessionData,
 ) -> Result<(), MigrationResult> {
     use core::ops::DerefMut;
 
@@ -518,7 +465,9 @@ pub async fn rebinding_new_prepare(
             &mut spdm_responder,
             info,
             #[cfg(feature = "policy_v2")]
-            remote_policy,
+            peer_data.policy,
+            #[cfg(feature = "policy_v2")]
+            peer_data.issuer_chain,
         ),
     )
     .await
@@ -547,7 +496,7 @@ async fn rebinding_old_prepare(
     info: &RebindingInfo,
     init_migtd_data: &InitData,
     data: &mut Vec<u8>,
-    remote_policy: Vec<u8>,
+    peer_data: PeerPreSessionData,
 ) -> Result<(), MigrationResult> {
     let servtd_ext = read_servtd_ext(info.binding_handle, &info.target_td_uuid)?;
 
@@ -567,7 +516,8 @@ async fn rebinding_old_prepare(
     // TLS client
     let mut ratls_client = ratls::client_rebinding(
         transport,
-        remote_policy,
+        peer_data.policy,
+        peer_data.issuer_chain,
         &init_policy_hash,
         init_tdinfo,
         init_event_log,
@@ -603,25 +553,28 @@ async fn rebinding_new_prepare(
     transport: TransportType,
     info: &RebindingInfo,
     data: &mut Vec<u8>,
-    pre_session_data: Vec<u8>,
+    peer_data: PeerPreSessionData,
 ) -> Result<(), MigrationResult> {
     // TLS server
-    let mut ratls_server = ratls::server_rebinding(transport, pre_session_data).map_err(|e| {
-        #[cfg(feature = "vmcall-raw")]
-        data.extend_from_slice(
-            &format!(
-                "Error: rebinding_new(): Failed in ratls transport. Migration ID: {:x}\n",
-                info.mig_request_id
-            )
-            .into_bytes(),
-        );
-        log::error!(
-            "rebinding_new(): Failed in ratls transport. Migration ID: {} Error: {:?}\n",
-            info.mig_request_id,
-            e
-        );
-        e
-    })?;
+    let mut ratls_server =
+        ratls::server_rebinding(transport, peer_data.policy, peer_data.issuer_chain).map_err(
+            |e| {
+                #[cfg(feature = "vmcall-raw")]
+                data.extend_from_slice(
+                    &format!(
+                        "Error: rebinding_new(): Failed in ratls transport. Migration ID: {:x}\n",
+                        info.mig_request_id
+                    )
+                    .into_bytes(),
+                );
+                log::error!(
+                    "rebinding_new(): Failed in ratls transport. Migration ID: {} Error: {:?}\n",
+                    info.mig_request_id,
+                    e
+                );
+                e
+            },
+        )?;
 
     let rebind_token = tls_receive_rebind_token(&mut ratls_server).await?;
 
