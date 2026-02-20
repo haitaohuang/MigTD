@@ -2551,6 +2551,7 @@ name = "tdx-mock-data"
 version = "0.1.0"
 dependencies = [
  "log",
+ "sha2",
  "tdx-tdcall",
 ]
 
