@@ -48,5 +48,5 @@ pub use td_uefi_pi::fv::{
 pub use td_uefi_pi::fv::load_policy_issuer_chain_from_file;
 
 #[cfg(feature = "policy_v2")]
-pub use file_ops::init_file_based_emulation_with_policy_chain;
+pub use file_ops::init_file_based_emulation_policy_v2;
 pub use file_ops::init_file_based_emulation_with_real_files;
