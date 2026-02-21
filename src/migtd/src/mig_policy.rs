@@ -244,7 +244,7 @@ mod v2 {
 
         policy
             .policy_data
-            .evaluate_policy_forward(&evaluation_data_dst, &relative_reference)?;
+            .evaluate_servtd_policy_forward(&evaluation_data_dst, &relative_reference)?;
 
         // Verify the destination's policy against local policy
         verified_policy_dst
@@ -301,13 +301,13 @@ mod v2 {
             get_init_tcb_evaluation_info(&init_tdreport, &verified_policy_init)?;
         policy
             .policy_data
-            .evaluate_policy_common(&evaluation_data_src, &relative_reference)?;
+            .evaluate_servtd_policy_common(&evaluation_data_src, &relative_reference)?;
 
         // If backward policy exists, evaluate the migration src based on it.
         let relative_reference = get_local_tcb_evaluation_info()?;
         policy
             .policy_data
-            .evaluate_policy_backward(&evaluation_data_src, &relative_reference)?;
+            .evaluate_servtd_policy_backward(&evaluation_data_src, &relative_reference)?;
 
         Ok(tdx_report.as_bytes().to_vec())
     }

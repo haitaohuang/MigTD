@@ -327,6 +327,43 @@ impl<'a> PolicyData<'a> {
         }
     }
 
+    /// Evaluate only the ServTD (MigTD identity) rules from a policy block,
+    /// skipping Global (TCB/platform/CRL) rules. Used for rebinding where
+    /// TD reports are used instead of DCAP quotes, so platform-level TCB
+    /// data is not available.
+    pub fn evaluate_servtd_policy_common(
+        &self,
+        value: &PolicyEvaluationInfo,
+        relative_reference: &PolicyEvaluationInfo,
+    ) -> Result<(), PolicyError> {
+        match self.policy.as_ref() {
+            Some(policy) => Self::evaluate_servtd_only(policy, value, relative_reference),
+            None => Ok(()),
+        }
+    }
+
+    pub fn evaluate_servtd_policy_forward(
+        &self,
+        value: &PolicyEvaluationInfo,
+        relative_reference: &PolicyEvaluationInfo,
+    ) -> Result<(), PolicyError> {
+        match self.forward_policy.as_ref() {
+            Some(policy) => Self::evaluate_servtd_only(policy, value, relative_reference),
+            None => Ok(()),
+        }
+    }
+
+    pub fn evaluate_servtd_policy_backward(
+        &self,
+        value: &PolicyEvaluationInfo,
+        relative_reference: &PolicyEvaluationInfo,
+    ) -> Result<(), PolicyError> {
+        match self.backward_policy.as_ref() {
+            Some(policy) => Self::evaluate_servtd_only(policy, value, relative_reference),
+            None => Ok(()),
+        }
+    }
+
     fn evaluate_policy_block(
         block: &Vec<PolicyTypes>,
         value: &PolicyEvaluationInfo,
@@ -336,6 +373,19 @@ impl<'a> PolicyData<'a> {
             match policy_type {
                 PolicyTypes::Global(global) => global.evaluate(value, relative_reference)?,
                 PolicyTypes::Servtd(migtd) => migtd.evaluate(value, relative_reference)?,
+            }
+        }
+        Ok(())
+    }
+
+    fn evaluate_servtd_only(
+        block: &Vec<PolicyTypes>,
+        value: &PolicyEvaluationInfo,
+        relative_reference: &PolicyEvaluationInfo,
+    ) -> Result<(), PolicyError> {
+        for policy_type in block {
+            if let PolicyTypes::Servtd(migtd) = policy_type {
+                migtd.evaluate(value, relative_reference)?;
             }
         }
         Ok(())
