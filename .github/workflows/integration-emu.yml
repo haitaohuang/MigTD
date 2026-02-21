@@ -50,6 +50,20 @@ jobs:
             test-command: "./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report --extra-features igvm-attest"
             artifact-name: "policy-v2-igvm-test-logs"
 
+          - test-name: "Rebind Prepare (Skip RA)"
+            test-type: "rebind-skip-ra"
+            install-jq: 'false'
+            timeout-seconds: 300
+            test-command: "./migtdemu.sh --operation rebind-prepare --skip-ra --both --no-sudo --log-level info"
+            artifact-name: "rebind-skip-ra-test-logs"
+
+          - test-name: "Rebind Prepare (Mock Report)"
+            test-type: "rebind-mock"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --operation rebind-prepare --mock-report --both --no-sudo --log-level info"
+            artifact-name: "rebind-mock-test-logs"
+
     steps:
       - name: Checkout sources
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -68,8 +82,14 @@ jobs:
           echo "Building MigTD with AzCVMEmu and test features for emulation testing..."
           cargo build --release --features "AzCVMEmu,test_disable_ra_and_accept_all" --no-default-features
 
+      - name: Build MigTD for rebind skip-ra test
+        if: matrix.test-type == 'rebind-skip-ra'
+        run: |
+          echo "Building MigTD with AzCVMEmu, policy_v2, and skip-RA features for rebind testing..."
+          cargo build --release --features "AzCVMEmu,policy_v2,test_disable_ra_and_accept_all" --no-default-features
+
       - name: Verify emulation script
-        if: matrix.test-type == 'skip-ra'
+        if: matrix.test-type == 'skip-ra' || matrix.test-type == 'rebind-skip-ra'
         run: |
           if [[ ! -f "./migtdemu.sh" ]]; then
             echo "Error: migtdemu.sh not found"
@@ -84,7 +104,7 @@ jobs:
           echo "Emulation script and binary are ready"
 
       - name: Prepare policy v2 script
-        if: matrix.test-type == 'policy-v2' || matrix.test-type == 'policy-v2-igvm'
+        if: matrix.test-type == 'policy-v2' || matrix.test-type == 'policy-v2-igvm' || matrix.test-type == 'rebind-mock'
         run: chmod +x ./sh_script/build_AzCVMEmu_policy_and_test.sh
 
       - name: Run test
@@ -131,6 +151,13 @@ jobs:
             echo ""
             echo "=== First 20 lines of destination log ==="
             head -n 20 dest.out.log
+          elif [[ -f "dest_rebind.out.log" ]]; then
+            DEST_LOG_SIZE=$(wc -l < dest_rebind.out.log)
+            echo "Destination rebind log found: $DEST_LOG_SIZE lines"
+            
+            echo ""
+            echo "=== Last 50 lines of destination rebind log ==="
+            tail -n 50 dest_rebind.out.log
           else
             echo "No destination log file found"
           fi
