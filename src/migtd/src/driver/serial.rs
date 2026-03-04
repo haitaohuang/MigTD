@@ -84,7 +84,7 @@ pub fn pci_ex_bar_initialization() {
     // Program the high register. Then program the low register, setting the
     // MMCONFIG area size and enabling decoding at once.
     //
-    log::info!("pci_exbar_base {:x}\n", pci_exbar_base);
+    log::info!("pci_exbar_base {pci_exbar_base:x}\n");
     log::info!(
         "pci_exbar_base {:x}, {:x}\n",
         (pci_exbar_base >> 32) as u32,

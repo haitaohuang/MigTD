@@ -271,13 +271,7 @@ pub fn dump_virtioqueue(queue_size: u16, desc: u64, avail: u64, used: u64) {
         let mut len = u32::from_le_bytes(len);
         let flags = u16::from_le_bytes(flags);
         let next = u16::from_le_bytes(next);
-        log::trace!(
-            "addr: {:x?}, len: {:x}, flags: {:x?}, next: {:x?}\n",
-            addr,
-            len,
-            flags,
-            next
-        );
+        log::trace!("addr: {addr:x?}, len: {len:x}, flags: {flags:x?}, next: {next:x?}\n");
         if addr != 0 {
             let mut buf = [0u8; BUF_LEN];
             if len > BUF_LEN as u32 {
@@ -311,7 +305,7 @@ pub fn dump_virtioqueue(queue_size: u16, desc: u64, avail: u64, used: u64) {
     let flags = u16::from_le_bytes(flags);
     let idx = u16::from_le_bytes(idx);
 
-    log::trace!("avail flags: {:x} avail idx: {:x}\n", flags, idx);
+    log::trace!("avail flags: {flags:x} avail idx: {idx:x}\n");
     for i in 0..queue_size as usize {
         availitem.copy_from_slice(
             &avail_buf[i * VIRTIO_AVAIL_RING_ELEMENT
@@ -340,7 +334,7 @@ pub fn dump_virtioqueue(queue_size: u16, desc: u64, avail: u64, used: u64) {
     let flags = u16::from_le_bytes(flags);
     let idx = u16::from_le_bytes(idx);
 
-    log::trace!("flags: {:x} idx: {:x}\n", flags, idx);
+    log::trace!("flags: {flags:x} idx: {idx:x}\n");
     for i in 0..queue_size as usize {
         useditem.copy_from_slice(
             &used_buf[i * VIRTIO_USED_USEDELEM..i * VIRTIO_USED_USEDELEM + VIRTIO_USEDELEM_ID],

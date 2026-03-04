@@ -521,9 +521,9 @@ impl VirtioSerial {
         let val = u16::from_le_bytes(control_msg[6..8].try_into().unwrap());
 
         log::info!("Control message:\n");
-        log::info!("event: {:x?}\n", event);
-        log::info!("port_nr: {:x?}\n", port_id);
-        log::info!("val: {:x?}\n", val);
+        log::info!("event: {event:x?}\n");
+        log::info!("port_nr: {port_id:x?}\n");
+        log::info!("val: {val:x?}\n");
 
         if port_id >= self.max_nr_ports || port_id >= MAX_PORT_SUPPORTED as u32 {
             return Err(VirtioSerialError::InvalidParameter);
