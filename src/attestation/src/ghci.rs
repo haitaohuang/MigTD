@@ -87,7 +87,7 @@ fn wait_for_quote_completion(notify_registered: bool, buffer: &[u8]) -> Result<(
     // If the VMM notification is successfully registered, wait for VMM injecting the interrupt.
     if notify_registered {
         wait_for_vmm_notification();
-        return Ok(());
+        //GetQuote state transitioned out of in-flight, now check the status code in the buffer.
     }
 
     let mut status_code = GET_QUOTE_STATUS_IN_FLIGHT;
