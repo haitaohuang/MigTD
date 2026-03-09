@@ -47,7 +47,6 @@ pub enum QuoteError {
 /// * `Err(QuoteError)` - If TD report generation fails
 pub fn get_quote_with_retry(additional_data: &[u8; 64]) -> Result<(Vec<u8>, Vec<u8>), QuoteError> {
     let mut delay_ms = INITIAL_DELAY_MS;
-    let mut last_error = None;
 
     for attempt in 1..=MAX_ATTEMPTS {
         // Get TD REPORT
@@ -65,25 +64,29 @@ pub fn get_quote_with_retry(additional_data: &[u8; 64]) -> Result<(Vec<u8>, Vec<
                 return Ok((quote, report_bytes.to_vec()));
             }
             Err(e) => {
-                log::warn!(
-                    "GetQuote failed (attempt {}/{}): {:?}, retrying with delay of {}ms\n",
-                    attempt,
-                    MAX_ATTEMPTS,
-                    e,
-                    delay_ms
-                );
-                last_error = Some(e);
-                delay_milliseconds(delay_ms);
-                delay_ms *= 2;
+                if attempt < MAX_ATTEMPTS {
+                    log::warn!(
+                        "GetQuote failed (attempt {}/{}): {:?}, retrying with delay of {}ms\n",
+                        attempt,
+                        MAX_ATTEMPTS,
+                        e,
+                        delay_ms
+                    );
+                    delay_milliseconds(delay_ms);
+                    delay_ms *= 2;
+                } else {
+                    log::error!(
+                        "GetQuote failed after {} attempts: {:?}\n",
+                        MAX_ATTEMPTS,
+                        e
+                    );
+                    return Err(QuoteError::QuoteGenerationFailed);
+                }
             }
         }
     }
 
-    log::error!(
-        "GetQuote failed after {} attempts: {:?}\n",
-        MAX_ATTEMPTS,
-        last_error
-    );
+    // Should be unreachable because the final attempt returns above on failure.
     Err(QuoteError::QuoteGenerationFailed)
 }
 
