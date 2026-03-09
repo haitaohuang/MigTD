@@ -41,7 +41,7 @@ lazy_static! {
     /// Emulated pending migration request info for waitforrequest
     static ref MIG_REQUEST: Mutex<Vec<EmuMigRequest>> = Mutex::new(Vec::new());
     /// Emulated MSK/TDCS field storage keyed by (binding_handle, target_uuid, field_identifier)
-    static ref MSK_FIELDS: Mutex<HashMap<(u64, [u64;4], u64), u64>> = Mutex::new(HashMap::new());
+    static ref BOUND_FIELDS: Mutex<HashMap<(u64, [u64;4], u64), u64>> = Mutex::new(HashMap::new());
     /// Emulated global-scope SYS fields keyed by field_identifier
     static ref SYS_FIELDS: Mutex<HashMap<u64, u64>> = Mutex::new(HashMap::new());
     /// Emulated td-scope metadata fields keyed by field_identifier
@@ -208,7 +208,7 @@ pub fn set_emulated_start_rebinding(
     populate_servtd_fields(binding_handle, target_td_uuid);
 }
 
-/// Populate MSK_FIELDS with ServTD extension data derived from the TD report.
+/// Record ServTD extension data derived from the TD report.
 ///
 /// In real TDX hardware, these fields are maintained by the TDX module in the
 /// target TD's TDCS. For emulation, we compute them from the TD report
@@ -246,14 +246,13 @@ fn populate_servtd_fields(binding_handle: u64, target_td_uuid: [u64; 4]) {
 
     let servtd_info_hash: [u8; 48] = Sha384::digest(&buffer).into();
 
-    // Helper: write byte slices to MSK_FIELDS in elem_size chunks
     let write_field = |field_base: u64, data: &[u8], elem_size: usize| {
         for (idx, chunk) in data.chunks(elem_size).enumerate() {
             let mut bytes = [0u8; 8];
             bytes[..chunk.len()].copy_from_slice(chunk);
             let val = u64::from_le_bytes(bytes);
             let key = (binding_handle, target_td_uuid, field_base + idx as u64);
-            MSK_FIELDS.lock().insert(key, val);
+            BOUND_FIELDS.lock().insert(key, val);
         }
     };
 
@@ -965,7 +964,7 @@ pub fn tdcall_servtd_rd(
         ],
         field_identifier,
     );
-    let val = MSK_FIELDS.lock().get(&key).copied().unwrap_or(0);
+    let val = BOUND_FIELDS.lock().get(&key).copied().unwrap_or(0);
     warn!(
         "AzCVMEmu: tdcall_servtd_rd emulated: bh=0x{:x} field=0x{:x} uuid=[{:x},{:x},{:x},{:x}] => 0x{:x}",
         binding_handle, field_identifier, key.1[0], key.1[1], key.1[2], key.1[3], val
@@ -1001,7 +1000,7 @@ pub fn tdcall_servtd_wr(
         "AzCVMEmu: tdcall_servtd_wr emulated: bh=0x{:x} field=0x{:x} uuid=[{:x},{:x},{:x},{:x}] <= 0x{:x}",
         binding_handle, field_identifier, key.1[0], key.1[1], key.1[2], key.1[3], data
     );
-    MSK_FIELDS.lock().insert(key, data);
+    BOUND_FIELDS.lock().insert(key, data);
     Ok(ServtdRWResult {
         content: data,
         uuid: key.1,

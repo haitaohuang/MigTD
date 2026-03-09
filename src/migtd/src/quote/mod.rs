@@ -23,8 +23,8 @@ use tdx_tdcall_emu::tdreport::tdcall_report;
 #[cfg(not(feature = "use-mock-quote"))]
 const INITIAL_DELAY_MS: u64 = 5000;
 
-/// Maximum number of retry attempts before giving up
-const MAX_RETRIES: u32 = 5;
+/// Maximum number of attempts before giving up
+const MAX_ATTEMPTS: u32 = 6;
 
 /// Error type for quote generation with retry
 #[derive(Debug)]
@@ -49,7 +49,7 @@ pub fn get_quote_with_retry(additional_data: &[u8; 64]) -> Result<(Vec<u8>, Vec<
     let mut delay_ms = INITIAL_DELAY_MS;
     let mut last_error = None;
 
-    for attempt in 0..=MAX_RETRIES {
+    for attempt in 1..=MAX_ATTEMPTS {
         // Get TD REPORT
         let current_report = tdcall_report(additional_data).map_err(|e| {
             log::error!("Failed to get TD report: {:?}\n", e);
@@ -67,21 +67,21 @@ pub fn get_quote_with_retry(additional_data: &[u8; 64]) -> Result<(Vec<u8>, Vec<
             Err(e) => {
                 log::warn!(
                     "GetQuote failed (attempt {}/{}): {:?}, retrying with delay of {}ms\n",
-                    attempt + 1,
-                    MAX_RETRIES + 1,
+                    attempt,
+                    MAX_ATTEMPTS,
                     e,
                     delay_ms
                 );
                 last_error = Some(e);
                 delay_milliseconds(delay_ms);
-                delay_ms = delay_ms * 2;
+                delay_ms *= 2;
             }
         }
     }
 
     log::error!(
         "GetQuote failed after {} attempts: {:?}\n",
-        MAX_RETRIES + 1,
+        MAX_ATTEMPTS,
         last_error
     );
     Err(QuoteError::QuoteGenerationFailed)

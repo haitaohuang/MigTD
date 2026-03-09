@@ -1223,6 +1223,7 @@ name = "tdx-mock-data"
 version = "0.1.0"
 dependencies = [
  "log",
+ "sha2",
  "tdx-tdcall",
 ]
 
@@ -1248,6 +1249,7 @@ dependencies = [
  "interrupt-emu",
  "lazy_static",
  "log",
+ "sha2",
  "spin",
  "tdx-mock-data",
  "tdx-tdcall",
