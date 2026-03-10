@@ -49,11 +49,13 @@ pub extern "C" fn servtd_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i3
         return AttestLibError::QuoteFailure as i32;
     }
 
-    if let Err(err) = wait_for_quote_completion(notify_registered, shared.as_bytes()) {
+    let wait_result = wait_for_quote_completion(notify_registered, shared.as_bytes());
+    input.copy_from_slice(&shared.as_bytes()[..len as usize]);
+
+    if let Err(err) = wait_result {
         log::error!("wait_for_quote_completion failed: {:?}\n", err);
         return err as i32;
     }
-    input.copy_from_slice(&shared.as_bytes()[..len as usize]);
 
     // Success
     0
