@@ -75,11 +75,7 @@ pub fn get_quote_with_retry(additional_data: &[u8; 64]) -> Result<(Vec<u8>, Vec<
                     delay_milliseconds(delay_ms);
                     delay_ms *= 2;
                 } else {
-                    log::error!(
-                        "GetQuote failed after {} attempts: {:?}\n",
-                        MAX_ATTEMPTS,
-                        e
-                    );
+                    log::error!("GetQuote failed after {} attempts: {:?}\n", MAX_ATTEMPTS, e);
                     return Err(QuoteError::QuoteGenerationFailed);
                 }
             }

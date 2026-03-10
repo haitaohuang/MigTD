@@ -90,16 +90,29 @@ fn wait_for_quote_completion(notify_registered: bool, buffer: &[u8]) -> Result<(
         //GetQuote state transitioned out of in-flight, now check the status code in the buffer.
     }
 
-    let mut status_code = GET_QUOTE_STATUS_IN_FLIGHT;
-    while status_code == GET_QUOTE_STATUS_IN_FLIGHT {
-        status_code = match buffer.get(GET_QUOTE_STATUS_FIELD) {
+    let status_code = loop {
+        let status = match buffer.get(GET_QUOTE_STATUS_FIELD) {
             Some(bytes) => u64::from_le_bytes(bytes.try_into().unwrap()),
             None => {
                 log::error!("Failed to get quote status from buffer\n");
                 return Err(AttestLibError::InvalidParameter);
             }
         };
-    }
+
+        if notify_registered {
+            if status == GET_QUOTE_STATUS_IN_FLIGHT {
+                log::warn!(
+                    "UNEXPECTED Error: Quote status remains IN_FLIGHT after VMM notification\n"
+                );
+                // upper layer should retry.
+            }
+            break status;
+        }
+
+        if status != GET_QUOTE_STATUS_IN_FLIGHT {
+            break status;
+        }
+    };
 
     if status_code == GET_QUOTE_STATUS_SUCCESS {
         Ok(())
