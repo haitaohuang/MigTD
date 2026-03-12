@@ -1,0 +1,237 @@
+# Azure DevOps Pipeline: Code Coverage for MigTD
+#
+# Collects coverage from two categories of tests:
+#   1. Library unit tests  – mirrors `cargo xtask lib-test`
+#   2. Emulation integration tests – mirrors integration-emu.yml
+#      (migtd binary runs as a regular process in AzCVMEmu mode,
+#       so profraw data is recoverable)
+#
+# Coverage from all runs is merged into a single Cobertura report and
+# published via PublishCodeCoverageResults@2.
+#
+# Note: integration-tdx tests are excluded because the migtd binary runs
+# as a firmware payload inside a TDX guest VM — there is no mechanism to
+# extract profraw coverage data from the guest back to the host.
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - "**.md"
+      - "doc/**"
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - "**.md"
+      - "doc/**"
+
+pool:
+  vmImage: "ubuntu-22.04"
+
+variables:
+  RUST_TOOLCHAIN: "1.88.0"
+  AS: nasm
+  AR: llvm-ar
+  CC: clang
+  # Override profile settings that interfere with coverage instrumentation
+  CARGO_PROFILE_DEV_STRIP: "false"
+  CARGO_PROFILE_DEV_LTO: "false"
+  CARGO_PROFILE_RELEASE_LTO: "false"
+
+steps:
+  - checkout: self
+    submodules: recursive
+
+  - script: |
+      sudo apt-get update -y
+      sudo apt-get install -y \
+        build-essential ocaml ocamlbuild automake autoconf libtool \
+        wget python-is-python3 libssl-dev git cmake perl \
+        nasm libtinfo5 libtss2-dev pkg-config jq
+    displayName: "Install build dependencies"
+
+  - script: |
+      sudo apt-get install -y llvm-10 clang-10 lld-10
+      sudo update-alternatives --install /usr/bin/llvm-ar llvm-ar /usr/bin/llvm-ar-10 100
+      sudo update-alternatives --install /usr/bin/clang   clang   /usr/bin/clang-10   100
+    displayName: "Install LLVM and Clang"
+
+  - script: |
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain $(RUST_TOOLCHAIN)
+      echo "##vso[task.prependpath]$(HOME)/.cargo/bin"
+    displayName: "Install Rust toolchain"
+
+  - script: |
+      rustup component add rust-src llvm-tools-preview
+      rustup target add x86_64-unknown-none
+    displayName: "Add Rust components and targets"
+
+  - script: cargo install cargo-llvm-cov --locked
+    displayName: "Install cargo-llvm-cov"
+
+  - script: bash sh_script/preparation.sh
+    displayName: "Run preparation script"
+
+  # =====================================================================
+  # Export coverage instrumentation env vars.
+  #
+  # `cargo llvm-cov show-env` emits RUSTFLAGS, LLVM_PROFILE_FILE, etc.
+  # Every subsequent `cargo build` / `cargo test` in this pipeline —
+  # including those invoked by migtdemu.sh and
+  # build_AzCVMEmu_policy_and_test.sh — inherits these variables, so the
+  # resulting binaries are instrumented and write profraw files on exit.
+  #
+  # Persisting the vars with ##vso lets each ADO step pick them up.
+  # =====================================================================
+  - script: |
+      cargo llvm-cov show-env --export-prefix > $(Agent.TempDirectory)/llvm-cov-env.sh
+      source $(Agent.TempDirectory)/llvm-cov-env.sh
+
+      # Work around a linker conflict: libservtd_attest_app.a defines its
+      # own atexit() which clashes with glibc when the coverage runtime
+      # (__llvm_profile_runtime) is linked in.
+      RUSTFLAGS="${RUSTFLAGS} -C link-arg=-Wl,--allow-multiple-definition"
+      echo "export RUSTFLAGS=\"${RUSTFLAGS}\"" >> $(Agent.TempDirectory)/llvm-cov-env.sh
+
+      while IFS= read -r line; do
+        # lines look like:  export VAR="value"
+        kv="${line#export }"
+        key="${kv%%=*}"
+        val="${kv#*=}"
+        # strip surrounding quotes
+        val="${val%\"}"
+        val="${val#\"}"
+        echo "##vso[task.setvariable variable=${key}]${val}"
+      done < $(Agent.TempDirectory)/llvm-cov-env.sh
+
+      cargo llvm-cov clean --workspace
+    displayName: "Configure coverage environment"
+
+  # =====================================================================
+  #  Unit tests – mirrors `cargo xtask lib-test`
+  # =====================================================================
+  - script: cargo test -p crypto
+    displayName: "Unit test – crypto"
+
+  - script: cargo test -p attestation --features test
+    displayName: "Unit test – attestation"
+
+  - script: cargo test -p pci
+    displayName: "Unit test – pci"
+
+  - script: cargo test -p virtio
+    displayName: "Unit test – virtio"
+
+  - script: cargo test -p vsock
+    displayName: "Unit test – vsock"
+
+  - script: cargo test -p migtd --features test_disable_ra_and_accept_all
+    displayName: "Unit test – migtd (disable RA)"
+
+  - script: cargo test -p migtd --features policy_v2
+    displayName: "Unit test – migtd (policy v2)"
+
+  - script: cargo test -p policy
+    displayName: "Unit test – policy (v1)"
+
+  - script: cargo test -p policy --features policy_v2
+    displayName: "Unit test – policy (v2)"
+
+  - script: cargo test -p migtd-collateral-generator
+    displayName: "Unit test – migtd-collateral-generator"
+
+  # =====================================================================
+  #  Emulation integration tests – mirrors integration-emu.yml
+  #
+  #  Each test builds migtd with different features.  We snapshot each
+  #  instrumented binary so `cargo llvm-cov report` can map ALL profraw
+  #  files back to their originating binary even after subsequent builds
+  #  overwrite the target directory.
+  # =====================================================================
+  - script: mkdir -p $(Build.SourcesDirectory)/cov-binaries
+    displayName: "Create binary snapshot directory"
+
+  # --- skip-ra test (release) ---
+  - script: |
+      chmod +x ./migtdemu.sh
+      ./migtdemu.sh --skip-ra --both --no-sudo --log-level info
+    displayName: "Emulation test – skip-ra"
+    timeoutInMinutes: 10
+
+  - script: cp target/release/migtd $(Build.SourcesDirectory)/cov-binaries/migtd-skip-ra || true
+    displayName: "Snapshot migtd binary (skip-ra)"
+
+  # --- policy-v2 with mock report (debug, via build_AzCVMEmu script) ---
+  - script: |
+      chmod +x ./sh_script/build_AzCVMEmu_policy_and_test.sh
+      ./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report
+    displayName: "Emulation test – policy v2 (mock report)"
+    timeoutInMinutes: 20
+
+  - script: |
+      cp target/debug/migtd  $(Build.SourcesDirectory)/cov-binaries/migtd-policy-v2-debug  || true
+      cp target/release/migtd $(Build.SourcesDirectory)/cov-binaries/migtd-policy-v2-release || true
+    displayName: "Snapshot migtd binary (policy-v2)"
+
+  # --- policy-v2 with mock report + igvm-attest (debug) ---
+  - script: |
+      ./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report --extra-features igvm-attest
+    displayName: "Emulation test – policy v2 (mock report + igvm-attest)"
+    timeoutInMinutes: 20
+
+  - script: |
+      cp target/debug/migtd  $(Build.SourcesDirectory)/cov-binaries/migtd-policy-v2-igvm-debug  || true
+      cp target/release/migtd $(Build.SourcesDirectory)/cov-binaries/migtd-policy-v2-igvm-release || true
+    displayName: "Snapshot migtd binary (policy-v2-igvm)"
+
+  # =====================================================================
+  #  Generate merged Cobertura report
+  #
+  #  Uses low-level llvm-profdata/llvm-cov to include both unit-test and
+  #  emulation binaries in a single merged report.
+  # =====================================================================
+  - script: |
+      TOOLCHAIN_BIN="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin"
+
+      # Merge all profraw files
+      "$TOOLCHAIN_BIN/llvm-profdata" merge -sparse target/MigTD-*.profraw -o target/merged-all.profdata
+
+      # Collect all instrumented binaries
+      BINS=()
+      for b in target/debug/deps/*-????????????????; do
+        if [ -f "$b" ] && [ -x "$b" ] && [[ ! "$b" == *.d ]] && [[ ! "$b" == *.so ]]; then
+          BINS+=("$b")
+        fi
+      done
+      for b in $(Build.SourcesDirectory)/cov-binaries/migtd-*; do
+        [ -f "$b" ] && BINS+=("$b")
+      done
+
+      OBJ_FLAGS=()
+      for ((i=1; i<${#BINS[@]}; i++)); do
+        OBJ_FLAGS+=("-object" "${BINS[$i]}")
+      done
+
+      "$TOOLCHAIN_BIN/llvm-cov" export \
+        --instr-profile=target/merged-all.profdata \
+        "${BINS[0]}" "${OBJ_FLAGS[@]}" \
+        --format=lcov \
+        --ignore-filename-regex='(\.cargo/registry|rustc/)' \
+        > target/coverage.lcov
+
+      # Convert LCOV to Cobertura XML
+      pip install lcov_cobertura
+      lcov_cobertura target/coverage.lcov -o $(Build.SourcesDirectory)/coverage.cobertura.xml
+    displayName: "Generate Cobertura coverage report"
+
+  - task: PublishCodeCoverageResults@2
+    inputs:
+      summaryFileLocation: "$(Build.SourcesDirectory)/coverage.cobertura.xml"
+    displayName: "Publish code coverage"
