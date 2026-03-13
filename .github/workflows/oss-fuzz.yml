@@ -7,6 +7,11 @@ jobs:
    permissions:
      security-events: write
    steps:
+   - name: Harden the runner (Audit all outbound calls)
+     uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+     with:
+       egress-policy: audit
+
    - name: Build Fuzzers
      id: build
      uses: google/oss-fuzz/infra/cifuzz/actions/build_fuzzers@1bdba6f59f138b9d224f18806921b79420eac145 # master
@@ -21,14 +26,14 @@ jobs:
        fuzz-seconds: 600
        output-sarif: true
    - name: Upload Crash
-     uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+     uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
      if: failure() && steps.build.outcome == 'success'
      with:
        name: artifacts
        path: ./out/artifacts
    - name: Upload Sarif
      if: always() && steps.build.outcome == 'success'
-     uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v3.29.5
+     uses: github/codeql-action/upload-sarif@0d579ffd059c29b07949a3cce3983f0780820c98 # v3.29.5
      with:
       # Path to SARIF file relative to the root of the repository
       sarif_file: cifuzz-sarif/results.sarif
