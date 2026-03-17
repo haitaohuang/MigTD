@@ -274,11 +274,133 @@ pub struct MigrationInformation {
     pub mig_socket_info: MigtdStreamSocketInfo,
     #[cfg(not(feature = "vmcall-raw"))]
     pub mig_policy: Option<MigtdMigpolicy>,
+    #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+    pub init_migtd_data: Option<InitData>,
 }
 
 impl MigrationInformation {
     pub fn is_src(&self) -> bool {
         self.mig_info.migration_source == 1
+    }
+}
+
+pub const MIGTD_DATA_SIGNATURE: &[u8] = b"MIGTDATA";
+pub const MIGTD_DATA_TYPE_INIT_MIG_POLICY: u32 = 0;
+pub const MIGTD_DATA_TYPE_INIT_TD_REPORT: u32 = 1;
+pub const MIGTD_DATA_TYPE_INIT_EVENT_LOG: u32 = 2;
+
+pub struct MigtdDataEntry<'a> {
+    pub r#type: u32,
+    pub length: u32,
+    pub value: &'a [u8],
+}
+
+impl<'a> MigtdDataEntry<'a> {
+    pub fn read_from_bytes(b: &'a [u8]) -> Option<Self> {
+        if b.len() < 8 {
+            return None;
+        }
+
+        let r#type = u32::from_le_bytes(b[0..4].try_into().unwrap());
+        let length = u32::from_le_bytes(b[4..8].try_into().unwrap());
+
+        if b.len() < length as usize + 8 {
+            return None;
+        }
+
+        Some(Self {
+            r#type,
+            length,
+            value: &b[8..8 + length as usize],
+        })
+    }
+}
+
+pub struct InitData {
+    pub init_report: alloc::vec::Vec<u8>,
+    pub init_policy: alloc::vec::Vec<u8>,
+    pub init_event_log: alloc::vec::Vec<u8>,
+}
+
+impl InitData {
+    pub fn read_from_bytes(b: &[u8]) -> Option<Self> {
+        if b.len() < 20 || &b[..8] != MIGTD_DATA_SIGNATURE {
+            return None;
+        }
+
+        let version = u32::from_le_bytes(b[8..12].try_into().unwrap());
+        let length = u32::from_le_bytes(b[12..16].try_into().unwrap());
+        let num_entries = u32::from_le_bytes(b[16..20].try_into().unwrap());
+
+        if version != 0x00010000 || b.len() < length as usize {
+            return None;
+        }
+
+        let mut offset = 20;
+        let mut init_report = None;
+        let mut init_policy = None;
+        let mut init_event_log = None;
+        for _ in 0..num_entries {
+            let entry = MigtdDataEntry::read_from_bytes(&b[offset..])?;
+            match entry.r#type {
+                MIGTD_DATA_TYPE_INIT_MIG_POLICY => init_policy = Some(entry.value),
+                MIGTD_DATA_TYPE_INIT_TD_REPORT => {
+                    if entry.value.len() > 1024 {
+                        return None;
+                    }
+                    init_report = Some(entry.value.to_vec())
+                }
+                MIGTD_DATA_TYPE_INIT_EVENT_LOG => init_event_log = Some(entry.value),
+                _ => return None,
+            }
+            offset += entry.length as usize + 8;
+        }
+
+        Some(Self {
+            init_report: init_report?,
+            init_policy: init_policy?.to_vec(),
+            init_event_log: init_event_log?.to_vec(),
+        })
+    }
+
+    pub fn write_into_bytes(&self, buf: &mut alloc::vec::Vec<u8>) {
+        let start_len = buf.len();
+        buf.extend_from_slice(MIGTD_DATA_SIGNATURE);
+        buf.extend_from_slice(&0x00010000u32.to_le_bytes()); // Version
+
+        // Placeholder for length.
+        buf.extend_from_slice(&0u32.to_le_bytes());
+
+        buf.extend_from_slice(&3u32.to_le_bytes()); // num_entries
+
+        // Helper to write entries
+        let mut write_entry = |type_: u32, value: &[u8]| {
+            buf.extend_from_slice(&type_.to_le_bytes());
+            buf.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            buf.extend_from_slice(value);
+        };
+
+        write_entry(MIGTD_DATA_TYPE_INIT_MIG_POLICY, &self.init_policy);
+        write_entry(MIGTD_DATA_TYPE_INIT_TD_REPORT, &self.init_report);
+        write_entry(MIGTD_DATA_TYPE_INIT_EVENT_LOG, &self.init_event_log);
+
+        let total_size = (buf.len() - start_len) as u32;
+
+        // Update length field
+        let length_offset = start_len + 12;
+        buf[length_offset..length_offset + 4].copy_from_slice(&total_size.to_le_bytes());
+    }
+
+    pub fn get_from_local(report_data: &[u8; 64]) -> Option<Self> {
+        use crate::{config, event_log};
+        Some(Self {
+            init_report: tdx_tdcall::tdreport::tdcall_report(report_data)
+                .ok()?
+                .as_bytes()
+                .to_vec(),
+            init_policy: config::get_policy()?.to_vec(),
+            init_event_log: event_log::get_event_log()?.to_vec(),
+        })
     }
 }
 

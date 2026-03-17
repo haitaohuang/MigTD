@@ -780,6 +780,46 @@ pub fn handle_exchange_mig_info_req(
 
     let mig_ver = cal_mig_version(false, &exchange_information, &remote_information)?;
     set_mig_version(&responder_app_context.migration_info, mig_ver)?;
+
+    // Verify servtd_ext and write approved hash before writing MSK (opt-in: skip if
+    // target TD does not support SERVTD_EXT, i.e., TDCS.ATTRIBUTES bit 17 is zero)
+    #[cfg(feature = "policy_v2")]
+    {
+        use crate::migration::data::InitData;
+        use crate::migration::servtd_ext::read_servtd_ext;
+        use crate::mig_policy::verify_init_tdreport;
+
+        let mig_info = &responder_app_context.migration_info;
+        let servtd_ext = read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid);
+
+        if let Some(servtd_ext) = servtd_ext {
+            let local_data = InitData::get_from_local(&[0u8; 64])
+                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+
+            let _init_tdreport = verify_init_tdreport(&local_data.init_report, &servtd_ext)
+                .map_err(|e| {
+                    log::error!("spdm migration: verify_init_tdreport failed: {:?}\n", e);
+                    SPDM_STATUS_INVALID_STATE_LOCAL
+                })?;
+
+            let tdcs_init_attr = u64::from_le_bytes(servtd_ext.init_attr);
+            let tdcs_cur_attr = u64::from_le_bytes(servtd_ext.cur_servtd_attr);
+            if tdcs_cur_attr != tdcs_init_attr {
+                log::error!("spdm migration: SERVTD_ATTR mismatch: cur=0x{:x} init=0x{:x}\n",
+                    tdcs_cur_attr, tdcs_init_attr);
+                return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+            }
+
+            let approved_hash = servtd_ext.calculate_approved_servtd_ext_hash()
+                .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+            write_approved_servtd_ext_hash(Some(&approved_hash))
+                .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+            log::info!("spdm migration: ServTD_EXT verification and approval completed\n");
+        } else {
+            log::info!("spdm migration: Target TD does not support SERVTD_EXT, skipping verification\n");
+        }
+    }
+
     write_msk(
         &responder_app_context.migration_info,
         &remote_information.key,

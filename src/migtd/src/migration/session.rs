@@ -310,15 +310,15 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
         let operation: u8 = data_status_bytes[1];
         log::trace!("wait_for_request: Received operation {} with data length {}\n", operation, data_length);
         if operation == DataStatusOperation::StartMigration as u8 {
-            // data_length should be MigtdMigrationInformation
+            // data_length should be at least MigtdMigrationInformation, optionally followed by InitData
             let expected_datalength = size_of::<MigtdMigrationInformation>();
-            if data_length != expected_datalength as u32 {
+            if (data_length as usize) < expected_datalength {
                 if data_length >= size_of::<u64>() as u32 {
                     let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
                     let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                    log::error!(migration_request_id = mig_request_id; "wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
+                    log::error!(migration_request_id = mig_request_id; "wait_for_request: StartMigration operation incorrect data length - expected at least {} actual {}\n", expected_datalength, data_length);
                 } else {
-                    log::error!("wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
+                    log::error!("wait_for_request: StartMigration operation incorrect data length - expected at least {} actual {}\n", expected_datalength, data_length);
                 }
                 return Poll::Pending;
             }
@@ -333,7 +333,28 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
                 binding_handle: u64::from_le_bytes(slice[48..56].try_into().unwrap()),
             };
 
-            let wfr_info = MigrationInformation { mig_info: wfr_info };
+            // Parse optional InitData if extra bytes follow the header
+            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+            let init_migtd_data = if data_length as usize > expected_datalength {
+                match InitData::read_from_bytes(&slice[expected_datalength..]) {
+                    Some(init_data) => {
+                        log::trace!(migration_request_id = mig_request_id; "wait_for_request: StartMigration parsed InitData from VMM\n");
+                        Some(init_data)
+                    }
+                    None => {
+                        log::error!(migration_request_id = mig_request_id; "wait_for_request: StartMigration failed to parse InitData\n");
+                        return Poll::Pending;
+                    }
+                }
+            } else {
+                None
+            };
+
+            let wfr_info = MigrationInformation {
+                mig_info: wfr_info,
+                #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+                init_migtd_data,
+            };
 
             try_accept_request(mig_request_id, WaitForRequestResponse::StartMigration(wfr_info))
         } else if operation == DataStatusOperation::StartRebinding as u8 {
@@ -617,7 +638,7 @@ pub async fn get_migtd_data(
     data: &mut Vec<u8>,
     request_id: u64,
 ) -> Result<()> {
-    use crate::migration::rebinding::InitData;
+    use crate::migration::data::InitData;
 
     let init_data = InitData::get_from_local(additional_data).ok_or_else(|| {
         log::error!( migration_request_id = request_id;
@@ -1041,6 +1062,17 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
             log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: set_mig_version error: {:?}\n", e);
             e
         })?;
+
+        // Destination MigTD: verify servtd_ext and write approved hash before writing MSK
+        #[cfg(feature = "policy_v2")]
+        if !info.is_src() {
+            verify_and_approve_servtd_ext(info).map_err(|e| {
+                log::error!(migration_request_id = info.mig_info.mig_request_id;
+                    "exchange_msk: verify_and_approve_servtd_ext error: {:?}\n", e);
+                e
+            })?;
+        }
+
         write_msk(&info.mig_info, &remote_information.key).map_err(|e| {
             log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: write_msk error: {:?}\n", e);
             e
@@ -1139,6 +1171,82 @@ pub fn write_msk(mig_info: &MigtdMigrationInformation, msk: &MigrationSessionKey
         })?;
     }
 
+    Ok(())
+}
+
+/// Verify the ServTD extension state of the target TD and write the approved hash.
+///
+/// On the destination side, before writing MSKs:
+/// 1. Read SERVTD_EXT from the target TD's TDCS (returns None if target TD
+///    does not support SERVTD_EXT, i.e., TDCS.ATTRIBUTES bit 17 is zero)
+/// 2. Get init data (VMM-provided or local fallback)
+/// 3. Verify init_tdreport against SERVTD_EXT hash in TDCS
+/// 4. Validate SERVTD_ATTR matches between TDCS and local init data
+/// 5. Calculate and write the approved SERVTD_EXT hash
+#[cfg(all(feature = "policy_v2", not(feature = "spdm_attestation")))]
+fn verify_and_approve_servtd_ext(info: &MigrationInformation) -> Result<()> {
+    use crate::migration::servtd_ext::{
+        read_servtd_ext, write_approved_servtd_ext_hash,
+    };
+    use crate::mig_policy::verify_init_tdreport;
+
+    let mig_info = &info.mig_info;
+
+    // Step 1: Read SERVTD_EXT from target TD's TDCS (None if not supported)
+    let servtd_ext = read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid);
+
+    let servtd_ext = match servtd_ext {
+        Some(ext) => ext,
+        None => {
+            log::info!(migration_request_id = mig_info.mig_request_id;
+                "Target TD does not support SERVTD_EXT, skipping verification\n");
+            return Ok(());
+        }
+    };
+
+    // Step 2: Get init data — VMM-provided if available, otherwise local
+    let local_data = InitData::get_from_local(&[0u8; 64]).ok_or_else(|| {
+        log::error!(migration_request_id = mig_info.mig_request_id;
+            "verify_and_approve_servtd_ext: failed to get local init data\n");
+        MigrationResult::InvalidParameter
+    })?;
+    #[cfg(feature = "vmcall-raw")]
+    let init_data = info.init_migtd_data.as_ref().unwrap_or(&local_data);
+    #[cfg(not(feature = "vmcall-raw"))]
+    let init_data = &local_data;
+
+    // Step 3: Verify init_tdreport against SERVTD_EXT init_servtd_info_hash
+    let _init_tdreport = verify_init_tdreport(&init_data.init_report, &servtd_ext)
+        .map_err(|e| {
+            log::error!(migration_request_id = mig_info.mig_request_id;
+                "verify_and_approve_servtd_ext: verify_init_tdreport failed: {:?}\n", e);
+            MigrationResult::PolicyUnsatisfiedError
+        })?;
+
+    // Step 4: Validate SERVTD_ATTR — ensure VMM did not set unexpected attribute flags.
+    let tdcs_init_attr = u64::from_le_bytes(servtd_ext.init_attr);
+    let tdcs_cur_attr = u64::from_le_bytes(servtd_ext.cur_servtd_attr);
+    if tdcs_cur_attr != tdcs_init_attr {
+        log::error!(migration_request_id = mig_info.mig_request_id;
+            "verify_and_approve_servtd_ext: SERVTD_ATTR mismatch: TDCS cur_attr=0x{:x} init_attr=0x{:x}\n",
+            tdcs_cur_attr, tdcs_init_attr);
+        return Err(MigrationResult::PolicyUnsatisfiedError);
+    }
+
+    // Step 5: Calculate and write approved SERVTD_EXT hash
+    let approved_hash = servtd_ext.calculate_approved_servtd_ext_hash().map_err(|e| {
+        log::error!(migration_request_id = mig_info.mig_request_id;
+            "verify_and_approve_servtd_ext: calculate_approved_servtd_ext_hash failed: {:?}\n", e);
+        e
+    })?;
+    write_approved_servtd_ext_hash(Some(&approved_hash)).map_err(|e| {
+        log::error!(migration_request_id = mig_info.mig_request_id;
+            "verify_and_approve_servtd_ext: write_approved_servtd_ext_hash failed: {:?}\n", e);
+        e
+    })?;
+
+    log::info!(migration_request_id = mig_info.mig_request_id;
+        "ServTD_EXT verification and approval completed successfully\n");
     Ok(())
 }
 

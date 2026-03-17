@@ -137,6 +137,10 @@ pub fn set_emulated_start_migration(
         target_td_uuid,
         binding_handle,
     });
+
+    // Step 4: Populate ServTD extension fields from TD report data
+    // This enables the destination MigTD to verify servtd_ext during migration
+    populate_servtd_fields(binding_handle, target_td_uuid);
 }
 
 /// Helper: Set a GetReportData request
@@ -274,7 +278,7 @@ fn populate_servtd_fields(binding_handle: u64, target_td_uuid: [u64; 4]) {
     write_field(TDCS_FIELD_SERVTD_INFO_HASH, &servtd_info_hash, 8);
     write_field(TDCS_FIELD_SERVTD_ATTR, &servtd_attr.to_le_bytes(), 8);
 
-    warn!("AzCVMEmu: Populated ServTD extension fields for rebinding");
+    warn!("AzCVMEmu: Populated ServTD extension fields");
 }
 
 /// Set TCP address and mode for emulation

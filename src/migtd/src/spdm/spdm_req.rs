@@ -933,7 +933,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
     //SERVTD_EXT
     let binding_handle = rebind_info.binding_handle;
     let target_td_uuid = &rebind_info.target_td_uuid;
-    let local_data = crate::migration::rebinding::InitData::get_from_local(&[0u8; 64])
+    let local_data = crate::migration::data::InitData::get_from_local(&[0u8; 64])
         .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
     let init_migtd_data = rebind_info.init_migtd_data.as_ref().unwrap_or(&local_data);
 

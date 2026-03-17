@@ -529,7 +529,7 @@ mod v2 {
         Ok(td_report)
     }
 
-    fn verify_init_tdreport(
+    pub fn verify_init_tdreport(
         init_report: &[u8],
         servtd_ext: &ServtdExt,
     ) -> Result<TdxReport, PolicyError> {
