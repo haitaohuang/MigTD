@@ -2,12 +2,15 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-//! Quote generation with retry logic for handling security updates
+//! Quote generation with retry logic for handling transient errors
 //!
-//! This module provides a resilient GetQuote flow that can handle impactless security
-//! updates. If an update happens after the REPORT is retrieved but before the QUOTE
-//! is generated, the Quoting Enclave may reject the REPORT. This module handles
-//! such scenarios with simple exponential backoff retry.
+//! This module provides a resilient GetQuote flow that handles two categories
+//! of retriable errors:
+//! - **Again**: Transient errors (VMCALL_RETRY, IN_FLIGHT) that
+//!   should be retried immediately without delay, up to 5 retries.
+//! - **Busy**: Service unavailable or error (QUOTE_ERROR, SERVICE_UNAVAILABLE)
+//!   that should be retried with exponential backoff (1s initial delay, up to 5 retries).
+//! Non-retriable errors cause immediate failure.
 
 #![cfg(feature = "attestation")]
 
@@ -19,16 +22,15 @@ use tdx_tdcall::tdreport::tdcall_report;
 #[cfg(feature = "AzCVMEmu")]
 use tdx_tdcall_emu::tdreport::tdcall_report;
 
-/// Initial retry delay in milliseconds (2 seconds)
+/// Initial backoff delay in milliseconds for busy/unavailable errors
 #[cfg(not(feature = "AzCVMEmu"))]
-const INITIAL_DELAY_MS: u64 = 2000;
+const BUSY_INITIAL_DELAY_MS: u64 = 1000;
 
-//shorter for testing
 #[cfg(feature = "AzCVMEmu")]
-const INITIAL_DELAY_MS: u64 = 20;
+const BUSY_INITIAL_DELAY_MS: u64 = 20;
 
-/// Maximum number of attempts before giving up
-const MAX_ATTEMPTS: u32 = 6; // Total wait time up to ~1 minutes with 2s initial delay
+/// Maximum number of retries for each error category
+const MAX_RETRIES: u32 = 5;
 
 /// Error type for quote generation with retry
 #[derive(Debug)]
@@ -39,9 +41,11 @@ pub enum QuoteError {
     QuoteGenerationFailed,
 }
 
-/// Get a quote with retry logic to handle potential security updates
+/// Get a quote with retry logic to handle transient and busy errors
 ///
-/// On quote failure, fetches a new TD REPORT and retries with exponential backoff.
+/// On retriable errors (Again), retries immediately without delay.
+/// On busy errors (Busy), retries with exponential backoff starting at 1s.
+/// Non-retriable errors cause immediate failure.
 ///
 /// # Arguments
 /// * `additional_data` - The 64-byte additional data to include in the TD REPORT
@@ -50,10 +54,11 @@ pub enum QuoteError {
 /// * `Ok((quote, report))` - The generated quote and the TD REPORT used
 /// * `Err(QuoteError)` - If TD report/quote generation fails
 pub fn get_quote_with_retry(additional_data: &[u8; 64]) -> Result<(Vec<u8>, Vec<u8>), QuoteError> {
-    let mut delay_ms = INITIAL_DELAY_MS;
+    let mut attempt: u32 = 0;
+    let mut busy_delay_ms = BUSY_INITIAL_DELAY_MS;
 
-    for attempt in 1..=MAX_ATTEMPTS {
-        // Get TD REPORT
+    loop {
+        // Get a fresh TD REPORT for each attempt
         let current_report = tdcall_report(additional_data).map_err(|e| {
             log::error!("Failed to get TD report: {:?}\n", e);
             QuoteError::ReportGenerationFailed
@@ -61,33 +66,44 @@ pub fn get_quote_with_retry(additional_data: &[u8; 64]) -> Result<(Vec<u8>, Vec<
 
         let report_bytes = current_report.as_bytes();
 
-        // Attempt to get quote
         match attestation::get_quote(report_bytes) {
             Ok(quote) => {
                 log::info!("Quote generated successfully\n");
                 return Ok((quote, report_bytes.to_vec()));
             }
-            Err(e) => {
-                if attempt < MAX_ATTEMPTS {
-                    log::warn!(
-                        "GetQuote failed (attempt {}/{}): {:?}, retrying with delay of {}ms\n",
-                        attempt,
-                        MAX_ATTEMPTS,
-                        e,
-                        delay_ms
-                    );
-                    delay_milliseconds(delay_ms);
-                    delay_ms *= 2;
-                } else {
-                    log::error!("GetQuote failed after {} attempts: {:?}\n", MAX_ATTEMPTS, e);
+            Err(attestation::Error::Again) => {
+                attempt += 1;
+                if attempt > MAX_RETRIES {
+                    log::error!("GetQuote failed after {} attempts\n", MAX_RETRIES);
                     return Err(QuoteError::QuoteGenerationFailed);
                 }
+                log::warn!(
+                    "GetQuote returned Again (attempt {}/{}), retrying immediately\n",
+                    attempt,
+                    MAX_RETRIES
+                );
+            }
+            Err(attestation::Error::Busy) => {
+                attempt += 1;
+                if attempt > MAX_RETRIES {
+                    log::error!("GetQuote failed after {} attempts\n", MAX_RETRIES);
+                    return Err(QuoteError::QuoteGenerationFailed);
+                }
+                log::warn!(
+                    "GetQuote returned Busy (attempt {}/{}), retrying in {}ms\n",
+                    attempt,
+                    MAX_RETRIES,
+                    busy_delay_ms
+                );
+                delay_milliseconds(busy_delay_ms);
+                busy_delay_ms *= 2;
+            }
+            Err(e) => {
+                log::error!("GetQuote failed with non-retriable error: {:?}\n", e);
+                return Err(QuoteError::QuoteGenerationFailed);
             }
         }
     }
-
-    // Should be unreachable because the final attempt returns above on failure.
-    Err(QuoteError::QuoteGenerationFailed)
 }
 
 /// Delay for the specified number of milliseconds

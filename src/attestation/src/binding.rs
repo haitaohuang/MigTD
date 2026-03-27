@@ -35,6 +35,8 @@ pub(crate) enum AttestLibError {
     DeviceFailure = 0x000a,
     /// Only supported RTMR index is 2 and 3
     InvalidRtmrIndex = 0x000b,
+    /// Transient error, caller should retry immediately
+    Again = 0x000c,
 }
 
 #[repr(C)]
