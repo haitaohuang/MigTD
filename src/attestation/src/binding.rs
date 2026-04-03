@@ -39,6 +39,28 @@ pub(crate) enum AttestLibError {
     Again = 0x000c,
 }
 
+impl AttestLibError {
+    pub fn from_i32(value: i32) -> Option<Self> {
+        match value {
+            0x0000 => Some(Self::Success),
+            0x0001 => Some(Self::Unexpected),
+            0x0002 => Some(Self::InvalidParameter),
+            0x0003 => Some(Self::OutOfMemory),
+            0x0004 => Some(Self::VsockFailure),
+            0x0005 => Some(Self::ReportFailure),
+            0x0006 => Some(Self::ExtendFailure),
+            0x0007 => Some(Self::NotSupported),
+            0x0008 => Some(Self::QuoteFailure),
+            0x0009 => Some(Self::Busy),
+            0x000a => Some(Self::DeviceFailure),
+            0x000b => Some(Self::InvalidRtmrIndex),
+            0x000c => Some(Self::Again),
+            0x0070 => Some(Self::QuoteFailure),
+            _ => Some(Self::Unexpected),
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct QveCollateral {
@@ -86,7 +108,7 @@ mod attest_lib_binding {
             tdx_report_size: u32,
             p_quote: *mut ::core::ffi::c_void,
             p_quote_size: *mut u32,
-        ) -> AttestLibError;
+        ) -> i32;
 
         /// Verify the integrity of MigTD's Quote and return td report of MigTD
         /// Note: all IN/OUT memory should be managed by Caller
@@ -147,9 +169,9 @@ mod null_binding {
         _tdx_report_size: u32,
         _p_quote: *mut ::core::ffi::c_void,
         _p_quote_size: *mut u32,
-    ) -> AttestLibError {
+    ) -> i32 {
         *_p_quote_size = TD_VERIFIED_REPORT_SIZE as u32;
-        AttestLibError::Success
+        AttestLibError::Success as i32
     }
 
     #[no_mangle]

@@ -96,17 +96,18 @@ pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
         let mut quote = vec![0u8; TD_QUOTE_SIZE];
         let mut quote_size = TD_QUOTE_SIZE as u32;
         unsafe {
-            let result = get_quote_inner(
+            let ret = get_quote_inner(
                 td_report.as_ptr() as *const c_void,
                 TD_REPORT_SIZE as u32,
                 quote.as_mut_ptr() as *mut c_void,
                 &mut quote_size as *mut u32,
             );
-            if result != AttestLibError::Success {
-                log::error!("get_quote_inner failed with error: {:?}\n", result);
+            let result = AttestLibError::from_i32(ret);
+            if result != Some(AttestLibError::Success) {
+                log::error!("get_quote_inner failed with raw error code: {:?}\n", ret);
                 return Err(match result {
-                    AttestLibError::Again => Error::Again,
-                    AttestLibError::Busy => Error::Busy,
+                    Some(AttestLibError::Again) => Error::Again,
+                    Some(AttestLibError::Busy) => Error::Busy,
                     _ => Error::GetQuote,
                 });
             }
