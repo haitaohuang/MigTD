@@ -121,9 +121,10 @@ pub fn verify_quote(quote: &[u8]) -> Result<Vec<u8>, Error> {
     let mut td_report_verify = vec![0u8; TD_REPORT_VERIFY_SIZE];
     let mut report_verify_size = TD_REPORT_VERIFY_SIZE as u32;
 
-    // Safety:
-    // ROOT_CA must have been set and checked at this moment.
-    let public_key = ROOT_CA_PUBLIC_KEY.get().unwrap().as_slice();
+    let public_key = ROOT_CA_PUBLIC_KEY
+        .get()
+        .ok_or(Error::InvalidRootCa)?
+        .as_slice();
 
     unsafe {
         let result = verify_quote_integrity(
@@ -161,9 +162,10 @@ pub fn verify_quote_with_collaterals(
     let mut td_report_verify = vec![0u8; TD_REPORT_VERIFY_SIZE];
     let mut report_verify_size = TD_REPORT_VERIFY_SIZE as u32;
 
-    // Safety:
-    // ROOT_CA must have been set and checked at this moment.
-    let public_key = ROOT_CA_PUBLIC_KEY.get().unwrap().as_slice();
+    let public_key = ROOT_CA_PUBLIC_KEY
+        .get()
+        .ok_or(Error::InvalidRootCa)?
+        .as_slice();
 
     let qve_collateral: QveCollateral = (&collateral).into();
     unsafe {

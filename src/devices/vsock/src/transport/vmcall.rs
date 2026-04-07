@@ -193,11 +193,13 @@ async fn vmcall_service_migtd_send(
         }
 
         // Do the sanity check
-        if reply.guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes()
+        let reply_data = reply.data();
+        if reply_data.len() < 12
+            || reply.guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes()
             || reply.status() != 0
-            || reply.data()[0] != CURRENT_VERSION
-            || reply.data()[1] != COMMAND_SEND
-            || u64::from_le_bytes(reply.data()[4..12].try_into().unwrap()) != mid
+            || reply_data[0] != CURRENT_VERSION
+            || reply_data[1] != COMMAND_SEND
+            || u64::from_le_bytes(reply_data[4..12].try_into().unwrap()) != mid
         {
             return Poll::Ready(Err(VsockTransportError::InvalidParameter));
         }
@@ -231,16 +233,18 @@ async fn vmcall_service_migtd_receive(
         }
 
         // Do the sanity check
-        if reply.guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes()
+        let rdata = reply.data();
+        if rdata.len() < 12
+            || reply.guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes()
             || reply.status() != 0
-            || reply.data()[0] != CURRENT_VERSION
-            || reply.data()[1] != COMMAND_RECV
-            || u64::from_le_bytes(reply.data()[4..12].try_into().unwrap()) != mid
+            || rdata[0] != CURRENT_VERSION
+            || rdata[1] != COMMAND_RECV
+            || u64::from_le_bytes(rdata[4..12].try_into().unwrap()) != mid
         {
             return Poll::Ready(Err(VsockTransportError::InvalidParameter));
         }
 
-        recv_packet(&reply.data()[12..])?;
+        recv_packet(&rdata[12..])?;
         Poll::Ready(pop_stream_queues(addrs).ok_or(VsockTransportError::InvalidVsockPacket))
     })
     .await

@@ -49,12 +49,8 @@ fn pop_stream_queues(stream: &VmcallRaw) -> Option<Vec<u8>> {
 //
 // pkt = MigTD Communication Packet
 fn recv_packet(pkt: &[u8], pkt_len: usize, stream: &VmcallRaw) -> Result<(), ()> {
-    let data: Vec<u8> = pkt
-        .get(..pkt_len)
-        .expect("pkt_len exceeds buffer length")
-        .to_vec();
+    let data: Vec<u8> = pkt.get(..pkt_len).ok_or(())?.to_vec();
 
-    assert_eq!(data.len(), pkt_len);
     push_stream_queues(stream, data);
 
     Ok(())

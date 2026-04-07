@@ -9,9 +9,11 @@ use crate::driver::crash::update_guest_crash_reg_report;
 use alloc::format;
 
 #[cfg(feature = "vmcall-raw")]
-pub fn vmcall_raw_device_init() {
+pub fn vmcall_raw_device_init() -> Result<(), &'static str> {
     // Initialize the transport
-    vmcall_raw::transport::vmcall_raw_transport_init().expect("Failed to initialize vmcall-raw");
+    vmcall_raw::transport::vmcall_raw_transport_init()
+        .map_err(|_| "Failed to initialize vmcall-raw")?;
+    Ok(())
 }
 
 #[track_caller]

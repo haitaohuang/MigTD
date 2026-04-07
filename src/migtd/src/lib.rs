@@ -90,19 +90,39 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     driver::timer::init_timer();
 
     #[cfg(feature = "virtio-serial")]
-    driver::serial::virtio_serial_device_init();
+    if let Err(e) = driver::serial::virtio_serial_device_init() {
+        log::error!("virtio_serial_device_init failed: {}\n", e);
+        loop {
+            x86_64::instructions::hlt();
+        }
+    }
 
     // Init the vsock-virtio device
     #[cfg(feature = "virtio-vsock")]
-    driver::vsock::virtio_vsock_device_init();
+    if let Err(e) = driver::vsock::virtio_vsock_device_init() {
+        log::error!("virtio_vsock_device_init failed: {}\n", e);
+        loop {
+            x86_64::instructions::hlt();
+        }
+    }
 
     // Init the vmcall-vsock device
     #[cfg(feature = "vmcall-vsock")]
-    driver::vsock::vmcall_vsock_device_init();
+    if let Err(e) = driver::vsock::vmcall_vsock_device_init() {
+        log::error!("vmcall_vsock_device_init failed: {}\n", e);
+        loop {
+            x86_64::instructions::hlt();
+        }
+    }
 
     // Init the vmcall-raw device
     #[cfg(feature = "vmcall-raw")]
-    driver::vmcall_raw::vmcall_raw_device_init();
+    if let Err(e) = driver::vmcall_raw::vmcall_raw_device_init() {
+        log::error!("vmcall_raw_device_init failed: {}\n", e);
+        loop {
+            x86_64::instructions::hlt();
+        }
+    }
 
     // Initilize the system ticks
     driver::ticks::init_sys_tick();

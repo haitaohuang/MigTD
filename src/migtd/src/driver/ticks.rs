@@ -22,9 +22,10 @@ pub fn init_sys_tick() {
 }
 
 fn timer_callback() {
-    SYS_TICK
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_add(1))
-        .unwrap();
+    // The closure always returns Some, so fetch_update always succeeds.
+    let _ = SYS_TICK.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+        Some(v.wrapping_add(1))
+    });
     schedule_timeout(INTERVAL);
 }
 

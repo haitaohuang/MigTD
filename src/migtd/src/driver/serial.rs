@@ -47,14 +47,15 @@ impl Timer for SerailTimer {
 }
 
 #[cfg(feature = "virtio-serial")]
-pub fn virtio_serial_device_init() {
+pub fn virtio_serial_device_init() -> Result<(), &'static str> {
     pci_ex_bar_initialization();
 
     // Initialize MMIO space
     pci::init_mmio();
 
     // Enumerate the virtio device
-    let (_b, dev, _f) = pci::find_device(VIRTIO_PCI_VENDOR_ID, VIRTIO_PCI_DEVICE_ID).unwrap();
+    let (_b, dev, _f) = pci::find_device(VIRTIO_PCI_VENDOR_ID, VIRTIO_PCI_DEVICE_ID)
+        .ok_or("Required virtio serial PCI device not found")?;
 
     let pci_device = pci::PciDevice::new(0, dev, 0);
 
@@ -66,9 +67,12 @@ pub fn virtio_serial_device_init() {
         Box::new(Allocator {}),
         Box::new(SerailTimer {}),
     )
-    .expect("Failed to create vsock transport layer");
+    .map_err(|_| "Failed to create virtio serial transport layer")?;
 
-    virtio_serial::register_serial_device(serial).expect("Failed to register serial device");
+    virtio_serial::register_serial_device(serial)
+        .map_err(|_| "Failed to register serial device")?;
+
+    Ok(())
 }
 
 pub fn pci_ex_bar_initialization() {

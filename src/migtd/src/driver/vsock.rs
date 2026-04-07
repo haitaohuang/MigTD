@@ -24,13 +24,15 @@ impl VsockDmaPageAllocator for Allocator {
 }
 
 #[cfg(feature = "vmcall-vsock")]
-pub fn vmcall_vsock_device_init() {
+pub fn vmcall_vsock_device_init() -> Result<(), &'static str> {
     // Initialize the vsock transport
-    vsock::transport::vsock_transport_init().expect("Failed to initialize vmcall-vsock");
+    vsock::transport::vsock_transport_init()
+        .map_err(|_| "Failed to initialize vmcall-vsock")?;
+    Ok(())
 }
 
 #[cfg(feature = "virtio-vsock")]
-pub fn virtio_vsock_device_init() {
+pub fn virtio_vsock_device_init() -> Result<(), &'static str> {
     use alloc::boxed::Box;
 
     pci_ex_bar_initialization();
@@ -39,7 +41,8 @@ pub fn virtio_vsock_device_init() {
     pci::init_mmio();
 
     // Enumerate the virtio device
-    let (_b, dev, _f) = pci::find_device(VIRTIO_PCI_VENDOR_ID, VIRTIO_PCI_DEVICE_ID).unwrap();
+    let (_b, dev, _f) = pci::find_device(VIRTIO_PCI_VENDOR_ID, VIRTIO_PCI_DEVICE_ID)
+        .ok_or("Required virtio vsock PCI device not found")?;
 
     let pci_device = pci::PciDevice::new(0, dev, 0);
 
@@ -48,7 +51,9 @@ pub fn virtio_vsock_device_init() {
 
     // Initialize the vsock transport
     vsock::transport::vsock_transport_init(Box::new(virtio_transport), Box::new(Allocator {}))
-        .expect("Failed to initialize vsock device");
+        .map_err(|_| "Failed to initialize vsock device")?;
+
+    Ok(())
 }
 
 #[cfg(feature = "virtio-vsock")]
