@@ -102,6 +102,13 @@ impl RebindingInfo {
         payload: &[u8],
     ) -> core::result::Result<Self, crate::migration::MigrationResult> {
         use crate::migration::MigrationResult;
+        log::debug!(
+            "read_from_bytes: type={:?}, data_length={}, payload({} bytes)={:02x?}",
+            core::any::type_name::<Self>(),
+            data_length,
+            payload.len(),
+            payload
+        );
         let b = payload;
         // Check the length of input and the reserved fields
         if b.len() < 56 || (data_length as usize) < 56 || b[11..16] != [0; 5] {

@@ -39,6 +39,13 @@ macro_rules! impl_read_from_bytes {
                 data_length: u32,
                 payload: &[u8],
             ) -> core::result::Result<Self, MigrationResult> {
+                log::debug!(
+                    "read_from_bytes: type={:?}, data_length={}, payload({} bytes)={:02x?}",
+                    core::any::type_name::<Self>(),
+                    data_length,
+                    payload.len(),
+                    payload
+                );
                 if data_length != core::mem::size_of::<Self>() as u32 {
                     return Err(MigrationResult::InvalidParameter);
                 }
@@ -149,6 +156,13 @@ impl ReportInfo {
         data_length: u32,
         payload: &[u8],
     ) -> core::result::Result<Self, MigrationResult> {
+        log::debug!(
+            "read_from_bytes: type={:?}, data_length={}, payload({} bytes)={:02x?}",
+            core::any::type_name::<Self>(),
+            data_length,
+            payload.len(),
+            payload
+        );
         let request_id_only = core::mem::size_of::<u64>() as u32;
         let full_report = core::mem::size_of::<Self>() as u32;
         if data_length != request_id_only && data_length != full_report {
