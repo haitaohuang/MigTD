@@ -46,8 +46,18 @@ macro_rules! impl_read_from_bytes {
                     payload.len(),
                     payload
                 );
-                if data_length != core::mem::size_of::<Self>() as u32 {
+                let expected = core::mem::size_of::<Self>() as u32;
+                if data_length < expected {
                     return Err(MigrationResult::InvalidParameter);
+                }
+                if data_length > expected {
+                    log::debug!(
+                        "read_from_bytes: type={:?} has {} extra bytes beyond expected {}: {:02x?}",
+                        core::any::type_name::<Self>(),
+                        data_length - expected,
+                        expected,
+                        &payload[expected as usize..data_length as usize]
+                    );
                 }
                 payload
                     .pread(0)
@@ -165,10 +175,19 @@ impl ReportInfo {
         );
         let request_id_only = core::mem::size_of::<u64>() as u32;
         let full_report = core::mem::size_of::<Self>() as u32;
-        if data_length != request_id_only && data_length != full_report {
+        if data_length < request_id_only {
             return Err(MigrationResult::InvalidParameter);
         }
-        if data_length == full_report {
+        if data_length > full_report {
+            log::debug!(
+                "read_from_bytes: type={:?} has {} extra bytes beyond expected {}: {:02x?}",
+                core::any::type_name::<Self>(),
+                data_length - full_report,
+                full_report,
+                &payload[full_report as usize..data_length as usize]
+            );
+        }
+        if data_length >= full_report {
             payload
                 .pread(0)
                 .map_err(|_| MigrationResult::InvalidParameter)

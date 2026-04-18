@@ -110,6 +110,16 @@ impl RebindingInfo {
             payload
         );
         let b = payload;
+        let expected = data_length as usize;
+        if b.len() > expected {
+            log::debug!(
+                "read_from_bytes: type={:?} has {} trailing bytes beyond expected {}: {:02x?}",
+                core::any::type_name::<Self>(),
+                b.len() - expected,
+                expected,
+                &b[expected..]
+            );
+        }
         // Check the length of input and the reserved fields
         if b.len() < 56 || (data_length as usize) < 56 || b[11..16] != [0; 5] {
             return Err(MigrationResult::InvalidParameter);
