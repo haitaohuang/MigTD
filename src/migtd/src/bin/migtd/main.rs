@@ -429,6 +429,8 @@ fn handle_pre_mig() {
                                 .unwrap_or_else(|e| e);
                             if status == MigrationResult::Success {
                                 log::trace!(migration_request_id = wfr_info.mig_info.mig_request_id; "Successfully completed key exchange\n");
+                            } else if status == MigrationResult::VmmCanceled {
+                                log::warn!(migration_request_id = wfr_info.mig_info.mig_request_id; "Migration canceled by VMM\n");
                             } else {
                                 log::error!(migration_request_id = wfr_info.mig_info.mig_request_id; "Failure during key exchange status code: {:x}\n", status.clone() as u8);
                             }
