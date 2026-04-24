@@ -55,3 +55,13 @@ Use your real name (sorry, no pseudonyms or anonymous contributions.)
 
 If you set your `user.name` and `user.email` git configs, you can sign your
 commit automatically with `git commit -s`.
+
+## Development Tools: VS Code Agents
+
+MigTD includes custom Copilot agents in VS Code to accelerate common development tasks. When using GitHub Copilot Chat in VS Code, you can invoke these specialized agents by mentioning them with `@agent-name`.
+
+### Available Agents
+
+**`@cargo-deny-resolver`** — Resolves Cargo Deny security issues, dependency conflicts, and validates fixes against the full CI test suite (advisories, bans, sources checks).
+
+See [.github/AGENTS.md](.github/AGENTS.md) for complete documentation on available agents and how to use them.
