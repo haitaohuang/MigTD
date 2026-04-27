@@ -1014,21 +1014,8 @@ mod verify {
         peer_data: &[u8],
     ) -> core::result::Result<(), CryptoError> {
         // Decode: [4-byte policy len][policy][4-byte init_tdinfo len][init_tdinfo][issuer_chain]
-        if peer_data.len() < 4 {
-            return Err(CryptoError::ParseCertificate);
-        }
-        let policy_len = u32::from_le_bytes(peer_data[..4].try_into().unwrap()) as usize;
-        if peer_data.len() < 8 + policy_len {
-            return Err(CryptoError::ParseCertificate);
-        }
-        let remote_policy = &peer_data[4..4 + policy_len];
-        let rest = &peer_data[4 + policy_len..];
-        let init_tdinfo_len = u32::from_le_bytes(rest[..4].try_into().unwrap()) as usize;
-        if rest.len() < 4 + init_tdinfo_len {
-            return Err(CryptoError::ParseCertificate);
-        }
-        let _init_tdinfo_from_peer = &rest[4..4 + init_tdinfo_len];
-        let peer_issuer_chain = &rest[4 + init_tdinfo_len..];
+        let (remote_policy, mut rest) = decode_peer_data(peer_data)?;
+        let (_init_tdinfo, peer_issuer_chain) = decode_peer_data(rest)?;
 
         let cert = Certificate::from_der(cert).map_err(|_| {
             log::error!("Failed to parse certificate from DER.\n");
