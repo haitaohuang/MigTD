@@ -935,6 +935,10 @@ async fn migration_src_exchange_msk(
 ) -> Result<()> {
     use core::ops::DerefMut;
 
+    log::info!(
+        "BC> SIDE=SRC migration_src_exchange_msk ENTER mig_request_id={}\n",
+        info.mig_info.mig_request_id
+    );
     const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
     let (mut spdm_requester, device_io_ref) = spdm::spdm_requester(transport).map_err(|_e| {
         log::error!(
@@ -980,6 +984,10 @@ async fn migration_dst_exchange_msk(
 ) -> Result<()> {
     use core::ops::DerefMut;
 
+    log::info!(
+        "BC> SIDE=DST migration_dst_exchange_msk ENTER mig_request_id={}\n",
+        info.mig_info.mig_request_id
+    );
     const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
     let (mut spdm_responder, device_io_ref) = spdm::spdm_responder(transport).map_err(|_e| {
         log::error!(
