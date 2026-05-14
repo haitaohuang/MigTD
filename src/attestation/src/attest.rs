@@ -27,7 +27,14 @@ compile_error!(
 
 pub const TD_QUOTE_SIZE: usize = 0x2000;
 const TD_REPORT_VERIFY_SIZE: usize = 1024;
-const ATTEST_HEAP_SIZE: usize = 0x80000;
+// NOTE: bumped from 0x80000 (512 KiB) to 0x200000 (2 MiB).
+// Each verify_quote_integrity_ex() call allocates from this private heap and
+// the wrapper does not appear to release everything between calls. With
+// LOCAL_TCB_INFO caching removed (commit 3c44ea9), each migration now does
+// up to 4 verify_quote calls in the same MigTD process (loopback), which can
+// exhaust the 512 KiB heap and trigger an internal abort (#UD) inside the C
+// verifier with no error code returned.
+const ATTEST_HEAP_SIZE: usize = 0x200000;
 
 /// C-compatible version of Collateral with null-terminated strings
 #[derive(Debug)]
@@ -73,6 +80,12 @@ pub fn attest_init_heap() -> Option<usize> {
     unsafe {
         let heap_base =
             alloc::alloc::alloc_zeroed(Layout::from_size_align(ATTEST_HEAP_SIZE, 0x1000).ok()?);
+
+        log::info!(
+            "BC> ATTEST init_heap base={:p} size=0x{:x}\n",
+            heap_base,
+            ATTEST_HEAP_SIZE
+        );
 
         init_heap(heap_base as *mut c_void, ATTEST_HEAP_SIZE as u32);
     }
