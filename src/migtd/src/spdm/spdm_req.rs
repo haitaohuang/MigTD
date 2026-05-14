@@ -694,18 +694,32 @@ fn verify_peer_attestation_v2(
     spdm_requester: &mut RequesterContext,
     session_id: u32,
 ) -> SpdmResult {
+    log::info!(
+        "BC> REQ-V2-01 enter verify_peer_attestation_v2 quote_peer.len={} event_log_peer.len={} mig_policy_hash_peer.len={} peer_data.len={}\n",
+        quote_peer.len(),
+        event_log_peer.len(),
+        mig_policy_hash_peer.len(),
+        peer_data.len()
+    );
     // 1. Verify peer-data hash matches the value bound in the certificate
     let peer_data_hash = digest_sha384(peer_data).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+    log::info!("BC> REQ-V2-02 digest_sha384(peer_data) ok\n");
     if mig_policy_hash_peer != peer_data_hash.as_slice() {
         error!("The received mig policy hash does not match the expected peer_data hash!\n");
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
+    log::info!("BC> REQ-V2-03 mig_policy_hash matches peer_data_hash\n");
 
     // 2. Authenticate remote (includes quote verification internally)
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
+        log::info!("BC> REQ-V2-04 calling mig_policy::authenticate_remote(is_src=true)\n");
         let policy_check_result =
             mig_policy::authenticate_remote(true, quote_peer, peer_data, event_log_peer);
+        log::info!(
+            "BC> REQ-V2-05 authenticate_remote returned ok={}\n",
+            policy_check_result.is_ok()
+        );
         if let Err(e) = &policy_check_result {
             error!("Policy v2 check failed, below is the detail information:\n");
             error!("{:x?}\n", e);
@@ -724,6 +738,7 @@ fn verify_peer_attestation_v2(
             feature = "use-mock-quote"
         )))]
         {
+            log::info!("BC> REQ-V2-06 verify_report_data_binding\n");
             let verified_report_peer = policy_check_result.unwrap();
             if verify_report_data_binding(&verified_report_peer, b"MigTDRsp", th1).is_err() {
                 error!("Peer REPORTDATA does not match expected TH1 binding!\n");
@@ -734,9 +749,11 @@ fn verify_peer_attestation_v2(
                 session.teardown();
                 return Err(SPDM_STATUS_INVALID_MSG_FIELD);
             }
+            log::info!("BC> REQ-V2-07 verify_report_data_binding ok\n");
         }
     }
 
+    log::info!("BC> REQ-V2-08 verify_peer_attestation_v2 return Ok\n");
     Ok(())
 }
 
