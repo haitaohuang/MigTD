@@ -1,0 +1,39 @@
+[workspace]
+# Standalone workspace so this host-side tool does not pick up the
+# no_std / panic = "abort" profile from the top-level migtd workspace.
+
+[package]
+name = "verify-quote-repro"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal host-side reproducer for the verify_quote_integrity_ex heap-exhaustion issue."
+publish = false
+
+[features]
+# `bounded-heap` (default) splices tlibc's bounded dlmalloc/sbrk into the
+# link so verifier allocations hit the same arena MigTD uses in-image
+# (heap_base/heap_size + SE_PAGE_SIZE-aligned sbrk). This is the mode that
+# can actually trigger the #UD crash on the host.
+#
+# Disabling the feature falls back to linking libservtd_attest_app.a alone
+# (verifier allocations go through host glibc malloc). That mode CANNOT
+# reproduce the #UD, but it is a valuable comparison because RSS is then a
+# leak/no-leak signal.
+default = ["bounded-heap"]
+bounded-heap = []
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+libc = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+x509-parser = "0.15"
+
+[build-dependencies]
+anyhow = "1.0"
+
+[profile.release]
+opt-level = 3
+debug = true
