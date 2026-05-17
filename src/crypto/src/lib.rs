@@ -216,7 +216,7 @@ fn verify_signature_with_cert(
     let cert =
         x509::Certificate::from_der(cert_der.as_ref()).map_err(|_| Error::ParseCertificate)?;
     let public_key = extract_public_key_from_cert(&cert)?;
-    let signature_algorithm = &cert.signature_algorithm;
+    let signature_algorithm = &cert.tbs_certificate.subject_public_key_info.algorithm;
 
     verify_signature_with_algorithm(&public_key, message, signature, signature_algorithm)
 }
