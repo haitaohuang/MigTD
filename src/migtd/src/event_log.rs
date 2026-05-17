@@ -67,7 +67,7 @@ pub fn get_event_log_mut() -> Option<&'static mut [u8]> {
 
 pub fn get_event_log() -> Option<&'static [u8]> {
     let raw = get_ccel().map(event_log_slice)?;
-    event_log_size(raw).map(|size| &raw[..size + 1])
+    event_log_size(raw).map(|size| &raw[..size])
 }
 
 fn event_log_size(event_log: &[u8]) -> Option<usize> {
