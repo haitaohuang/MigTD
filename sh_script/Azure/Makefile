@@ -3,7 +3,7 @@
 #
 
 IGVM_FILE ?= target/release/migtd.igvm
-LOG_LEVEL ?= trace
+LOG_LEVEL ?= info
 # Common features for IGVM images
 IGVM_FEATURES_BASE ?= vmcall-raw,stack-guard,main,vmcall-interrupt,oneshot-apic,spdm_attestation
 IGVM_FEATURES_GET_QUOTE ?= $(IGVM_FEATURES_BASE),igvm-attest
