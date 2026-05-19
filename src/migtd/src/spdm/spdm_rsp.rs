@@ -687,6 +687,11 @@ fn rsp_verify_peer_attestation_v2(
     let remote_policy_hash = digest_sha384(remote_policy).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
     if mig_policy_hash_peer != remote_policy_hash.as_slice() {
         error!("The received mig policy hash does not match the expected remote policy hash!\n");
+        let session = responder_context
+            .common
+            .get_session_via_id(session_id)
+            .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        session.teardown();
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
 
@@ -1116,6 +1121,11 @@ pub fn handle_exchange_rebind_attest_info_req(
             error!(
                 "The received mig policy hash does not match the expected remote policy hash!\n"
             );
+            let session = responder_context
+                .common
+                .get_session_via_id(session_id)
+                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+            session.teardown();
             return Err(SPDM_STATUS_INVALID_MSG_FIELD);
         }
 
@@ -1125,6 +1135,11 @@ pub fn handle_exchange_rebind_attest_info_req(
             .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
         if mig_policy_init_hash_src != mrowner {
             error!("The received mig policy init hash does not match mrowner from init tdinfo!\n");
+            let session = responder_context
+                .common
+                .get_session_via_id(session_id)
+                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+            session.teardown();
             return Err(SPDM_STATUS_INVALID_MSG_FIELD);
         }
 

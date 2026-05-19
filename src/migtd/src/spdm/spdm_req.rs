@@ -678,6 +678,11 @@ fn verify_peer_attestation_v2(
     let remote_policy_hash = digest_sha384(remote_policy).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
     if mig_policy_hash_peer != remote_policy_hash.as_slice() {
         error!("The received mig policy hash does not match the expected remote policy hash!\n");
+        let session = spdm_requester
+            .common
+            .get_session_via_id(session_id)
+            .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        session.teardown();
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
 
@@ -1169,6 +1174,11 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
             error!(
                 "The received mig policy hash does not match the expected remote policy hash!\n"
             );
+            let session = spdm_requester
+                .common
+                .get_session_via_id(session_id)
+                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+            session.teardown();
             return Err(SPDM_STATUS_INVALID_MSG_FIELD);
         }
 
