@@ -92,21 +92,24 @@ pub struct TeeModel {
     reservtd: [u8; 8],
 }
 
-/// Try to read ServtdExt from the target TD's TDCS.
-/// Returns `Ok(None)` if the target TD does not support SERVTD_EXT
-/// (TDCS.ATTRIBUTES bit 17 is zero). Returns `Err` on read failures.
+/// Read ServtdExt from the target TD's TDCS.
+///
+/// Returns `(ServtdExt, has_servtd_ext)`. When TDCS.ATTRIBUTES bit 17
+/// (SERVTDEXT) is clear, TDG.SERVTD.RD returns zeros for the SERVTD_EXT_*
+/// fields, so `ServtdExt` is a zero-filled placeholder.
 pub fn read_servtd_ext(
     binding_handle: u64,
     target_td_uuid: &[u64],
-) -> Result<Option<ServtdExt>, MigrationResult> {
+) -> Result<(ServtdExt, bool), MigrationResult> {
     // Check TDCS.ATTRIBUTES bit 17 (SERVTDEXT) to determine support.
     let attributes = tdcall_servtd_rd(binding_handle, TDCS_FIELD_ATTRIBUTES, target_td_uuid)?;
-    if (attributes.content & ATTRIBUTES_SERVTDEXT_BIT) == 0 {
+    let has_servtd_ext = (attributes.content & ATTRIBUTES_SERVTDEXT_BIT) != 0;
+    if !has_servtd_ext {
         log::info!(
-            "Target TD does not support SERVTD_EXT (ATTRIBUTES={:#x})\n",
+            "Target TD does not support SERVTD_EXT (ATTRIBUTES={:#x}); \
+             SERVTD_EXT_* TDCS fields will read as zeros\n",
             attributes.content
         );
-        return Ok(None);
     }
 
     let read_field =
@@ -142,6 +145,7 @@ pub fn read_servtd_ext(
     read_field(TDCS_FIELD_SERVTD_ATTR, 8, &mut cur_servtd_attr)?;
 
     // Verify CURR_SERVTD_ATTR matches the hardcoded expected value per GHCI 1.5.
+    // When `!has_servtd_ext`, cur_servtd_attr is all-zero, so this passes.
     let actual_attr = u64::from_le_bytes(cur_servtd_attr);
     if actual_attr != EXPECTED_SERVTD_ATTR {
         log::error!(
@@ -150,18 +154,21 @@ pub fn read_servtd_ext(
         return Err(MigrationResult::InvalidParameter);
     }
 
-    Ok(Some(ServtdExt {
-        init_servtd_info_hash,
-        init_attr,
-        init_cpusvn,
-        init_tee_tcb_svn,
-        init_tee_model,
-        reserved1: [0u8; 4],
-        cur_servtd_info_hash,
-        cur_servtd_attr,
-        reserved: [0u8; 8],
-        reserved2: [0u8; 104],
-    }))
+    Ok((
+        ServtdExt {
+            init_servtd_info_hash,
+            init_attr,
+            init_cpusvn,
+            init_tee_tcb_svn,
+            init_tee_model,
+            reserved1: [0u8; 4],
+            cur_servtd_info_hash,
+            cur_servtd_attr,
+            reserved: [0u8; 8],
+            reserved2: [0u8; 104],
+        },
+        has_servtd_ext,
+    ))
 }
 
 /// Verify that CURR_SERVTD_ATTR of the target TD matches the hardcoded expected value.

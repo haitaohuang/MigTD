@@ -219,7 +219,7 @@ async fn rebinding_old_prepare(
     data: &mut Vec<u8>,
     peer_data: Vec<u8>,
 ) -> Result<(), MigrationResult> {
-    let servtd_ext_opt = read_servtd_ext(info.binding_handle, &info.target_td_uuid)?;
+    let (servtd_ext, has_servtd_ext) = read_servtd_ext(info.binding_handle, &info.target_td_uuid)?;
 
     // Resolve the initial TDINFO_STRUCT: use VMM-provided bytes when present,
     // otherwise fall back to the local MigTD's self-report.
@@ -251,16 +251,15 @@ async fn rebinding_old_prepare(
     // Use mrowner directly as the init_policy_hash equivalent.
     let init_policy_hash = crate::migration::td_info_mrowner(init_td_info).to_vec();
 
-    // When SERVTD_EXT is not supported, send empty init_tdinfo — it cannot be
-    // verified without init_servtd_info_hash.
-    let init_tdinfo: &[u8] = if servtd_ext_opt.is_some() {
+    // When SERVTD_EXT is not supported by the target TD, send empty
+    // init_tdinfo. The 272-byte servtd_ext is always sent; emptiness of
+    // init_tdinfo is the opt-out signal.
+    let init_tdinfo: &[u8] = if has_servtd_ext {
         init_td_info
     } else {
         log::info!("SERVTD_EXT not supported, skipping init_tdinfo in rebind cert\n");
         &[]
     };
-    let empty_ext: ServtdExt = unsafe { core::mem::zeroed() };
-    let servtd_ext_ref = servtd_ext_opt.as_ref().unwrap_or(&empty_ext);
 
     // TLS client
     let mut ratls_client = ratls::client_rebinding(
@@ -268,7 +267,7 @@ async fn rebinding_old_prepare(
         peer_data,
         &init_policy_hash,
         init_tdinfo,
-        &servtd_ext_ref,
+        &servtd_ext,
     )
     .map_err(|_| {
         #[cfg(feature = "vmcall-raw")]

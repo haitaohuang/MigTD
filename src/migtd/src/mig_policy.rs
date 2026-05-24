@@ -315,49 +315,67 @@ mod v2 {
             )?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
-        // Per GHCI 1.5: cross-check the peer's wire-claimed init TDINFO against
-        // the peer's verified TDREPORT — init policy signer and init SVN must
-        // be consistent with the peer's current self-report.
-        //
-        // REVERT_ME: TEST MODE — failures are logged but do not abort, so MigTD can
-        // run against hosts that have not yet been updated to provision MROWNER/MROWNERCONFIG.
-        if let Err(e) = verify_peer_init_tdinfo_against_owner(
-            init_tdinfo,
-            &tdx_report.td_info.mrowner,
-            &tdx_report.td_info.mrownerconfig,
-        ) {
-            log::error!(
-                "verify_peer_init_tdinfo_against_owner failed: {:?} \
-                 (ignored: TEST MODE, continuing)\n",
-                e
+        if !init_tdinfo.is_empty() {
+            // Per GHCI 1.5: cross-check the peer's wire-claimed init TDINFO against
+            // the peer's verified TDREPORT — init policy signer and init SVN must
+            // be consistent with the peer's current self-report.
+            //
+            // REVERT_ME: TEST MODE — failures are logged but do not abort, so MigTD can
+            // run against hosts that have not yet been updated to provision MROWNER/MROWNERCONFIG.
+            if let Err(e) = verify_peer_init_tdinfo_against_owner(
+                init_tdinfo,
+                &tdx_report.td_info.mrowner,
+                &tdx_report.td_info.mrownerconfig,
+            ) {
+                log::error!(
+                    "verify_peer_init_tdinfo_against_owner failed: {:?} \
+                     (ignored: TEST MODE, continuing)\n",
+                    e
+                );
+            }
+
+            // Verify the init tdinfo against servtd_ext hash.
+            let servtd_ext_src_obj =
+                ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
+            let init_td_info = verify_init_tdinfo(init_tdinfo, &servtd_ext_src_obj)?;
+            #[cfg(not(feature = "use-mock-quote"))]
+            let _engine_svn = policy
+                .servtd_tcb_mapping
+                .get_engine_svn_by_measurements(&Measurements::new_from_bytes(
+                    &init_td_info.mrtd,
+                    &init_td_info.rtmr0,
+                    &init_td_info.rtmr1,
+                    Some(&init_td_info.rtmr2),
+                    Some(&init_td_info.rtmr3),
+                ))
+                .ok_or(PolicyError::SvnMismatch)?;
+            #[cfg(feature = "use-mock-quote")]
+            log::warn!("use-mock-quote: skipping get_engine_svn_by_measurements allowlist check\n");
+
+            // Use local policy's tcb_mapping with init tdinfo measurements
+            let relative_reference = setup_evaluation_data_with_tdinfo(&init_td_info, policy)?;
+            policy.policy_data.evaluate_policy_common(
+                &evaluation_data_src,
+                &relative_reference,
+                true,
+            )?;
+        } else {
+            // Source's target TD has SERVTD_EXT opted out — there is no
+            // signed init_tdinfo to verify and no init_td_info to feed into
+            // the allowlist. Evaluate the source's CURRENT TDREPORT against
+            // the local-TCB reference policy. The 272-byte servtd_ext on the
+            // wire is zero-filled by definition and ignored here.
+            log::info!(
+                "authenticate_rebinding_old: peer's target TD has SERVTD_EXT opted out; \
+                 skipping init_tdinfo verification\n"
             );
+            let relative_reference = get_local_tcb_evaluation_info()?;
+            policy.policy_data.evaluate_policy_common(
+                &evaluation_data_src,
+                &relative_reference,
+                true,
+            )?;
         }
-
-        // Verify the init tdinfo against servtd_ext hash
-        let servtd_ext_src_obj =
-            ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
-        let init_td_info = verify_init_tdinfo(init_tdinfo, &servtd_ext_src_obj)?;
-        #[cfg(not(feature = "use-mock-quote"))]
-        let _engine_svn = policy
-            .servtd_tcb_mapping
-            .get_engine_svn_by_measurements(&Measurements::new_from_bytes(
-                &init_td_info.mrtd,
-                &init_td_info.rtmr0,
-                &init_td_info.rtmr1,
-                None,
-                None,
-            ))
-            .ok_or(PolicyError::SvnMismatch)?;
-        #[cfg(feature = "use-mock-quote")]
-        log::warn!("use-mock-quote: skipping get_engine_svn_by_measurements allowlist check\n");
-
-        // Use local policy's tcb_mapping with init tdinfo measurements
-        let relative_reference = setup_evaluation_data_with_tdinfo(&init_td_info, policy)?;
-        policy.policy_data.evaluate_policy_common(
-            &evaluation_data_src,
-            &relative_reference,
-            true,
-        )?;
 
         // If backward policy exists, evaluate the migration src based on it.
         let relative_reference = get_local_tcb_evaluation_info()?;

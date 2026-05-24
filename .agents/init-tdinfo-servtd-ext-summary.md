@@ -1,6 +1,6 @@
 # Init_TDINFO and ServtdExt Usage Summary
 
-*Last updated after commit `bae6f54` (feat: verify init_TDINFO integrity and policy on migration destination) and subsequent patches.*
+*Last updated after the SERVTD_EXT wire-protocol unification (see "Wire-protocol contract" below).*
 
 ## Definitions
 
@@ -39,52 +39,100 @@ Metadata stored in the target TD's TDCS, read by the *current* MigTD via `TDG.SE
 
 ---
 
+## Wire-protocol contract (SPDM)
+
+This codebase deliberately decouples the SERVTD_EXT wire encoding from the
+target TD's `TDCS.ATTRIBUTES` bit 17 (SERVTDEXT):
+
+* **`ServtdExt` (272 bytes) is ALWAYS sent.** When the source's target TD has
+  SERVTD_EXT opted out (bit 17 = 0), `TDG.SERVTD.RD` returns zero for every
+  SERVTD_EXT_* TDCS field; the resulting structure is therefore zero-filled
+  but well-formed. `read_servtd_ext()` returns `(ServtdExt, has_servtd_ext)`
+  and never short-circuits the field reads.
+* **`Init_TDINFO` length is the SOLE opt-in signal.** Length 0 means the
+  source's target TD has SERVTD_EXT opted out; length 512 means opted in.
+  No other length is valid.
+* **Source rejects VMM-provided init_tdinfo when opted out.** If the VMM
+  populated `init_td_info` but the target TD has bit 17 = 0, the init_tdinfo
+  cannot be integrity-bound to the source's `init_servtd_info_hash` (it's
+  zero) and so the destination has no way to verify it. Source aborts with
+  `SPDM_STATUS_INVALID_STATE_LOCAL` rather than send unverifiable data.
+* **Destination accepts the empty case unconditionally.** It uses
+  `init_tdinfo.is_empty()` as the opt-in branch: empty → skip init-tdinfo
+  verification, run only the standard quote / event-log / policy checks
+  against the source's current TDREPORT. Non-empty → run the full init
+  verification path described below.
+* **`write_approved_servtd_ext_hash` / `write_servtd_rebind_attr` always
+  run** on the destination side. These writes target MigTD's *own* TDCS via
+  `TDG.VM.WR` (not the target TD's TDCS), so they always succeed regardless
+  of bit 17.
+
+The single goal of this contract is **"if bit 17 is zero, do not crash or
+hang"** while preserving full verification when bit 17 is one.
+
+---
+
 ## Usage in each path (SPDM only)
 
 ### Migration (source → destination)
 
 **Source side** (`spdm_req`):
-1. Reads `ServtdExt` from its bound target TD via `TDG.SERVTD.RD` (`read_servtd_ext()`).
-2. Obtains Init_TDINFO from VMM or local fallback.
-3. Sends both as VDM elements to the destination.
+1. Reads `ServtdExt` from its bound target TD via `TDG.SERVTD.RD`
+   (`read_servtd_ext()`). Always succeeds; returns `(ServtdExt, has_servtd_ext)`.
+2. If `!has_servtd_ext` and the VMM provided `init_td_info`, aborts with a
+   misconfiguration error (cannot be verified).
+3. If `has_servtd_ext`, obtains Init_TDINFO from VMM or falls back to local
+   self-report. If `!has_servtd_ext`, sends a zero-length Init_TDINFO VDM
+   element.
+4. Sends the 272-byte ServtdExt and the (possibly empty) Init_TDINFO as VDM
+   elements to the destination.
 
 **Destination side** (`spdm_rsp` → `authenticate_migration_source_with_init_tdinfo`):
-1. Receives ServtdExt and Init_TDINFO from wire.
-2. Stores ServtdExt in responder context for later use.
-3. **Standard policy checks** (POL-SRCv2-01..04): `authenticate_remote_common` (quote verification, event log, policy signature) → `evaluate_policy_common` + `evaluate_policy_backward` with local TCB as relative reference.
-4. **Init_TDINFO cross-check** (POL-SRCv2-05): calls `verify_peer_init_tdinfo_against_suppl_data()` — extracts `mrowner` and `mrownerconfig` from the source's *verified quote supplemental data*, then checks:
-   - Init_TDINFO's `mrowner` == source's quote `mrowner` (same policy signer)
-   - Init_TDINFO's `mrownerconfig[0..4]` (init policy SVN) ≤ source's quote `mrownerconfig[0..4]` (current policy SVN)
-   - Both `mrownerconfig[4..48]` must be all zeros
-   - ⚠️ **REVERT_ME TEST MODE**: failures are logged but do not abort.
-5. **Init_TDINFO integrity verification** (POL-SRCv2-06..07): calls `verify_init_tdinfo()` → `verify_servtd_hash()`:
-   - If `init_servtd_info_hash` is **all-zero** (host never provisioned it): skips hash check, returns parsed `TdInfo`. The allowlist gate in step 6 still validates the measurements.
-   - Otherwise: computes `SHA384(SHA384(masked_tdinfo) || SERVTD_TYPE || init_attr)` and compares to `init_servtd_info_hash`.
-   - ⚠️ **REVERT_ME TEST MODE**: hash mismatch is logged but returns `Ok` (soft-fail).
-   - **Enforced**: parse failure or all-zero bypass is hard-fail on malformed input.
-6. **Allowlist gate** (POL-SRCv2-08): `get_engine_svn_by_measurements()` — init MigTD's `mrtd`, `rtmr0`, `rtmr1` must be in `servtd_tcb_mapping`. **Enforced** (hard-fail on `SvnMismatch`). Skipped under `use-mock-quote` feature (mock binary has different MRTD).
-7. **Policy eval with init reference** (POL-SRCv2-09..10): `setup_evaluation_data_with_tdinfo()` → `evaluate_policy_common(eval_data_src, init_reference, skip_global=true)`. **Enforced** — policy failure aborts.
-8. **SERVTD_ATTR check** (at MSK exchange, `exchange_msk` in `session.rs`): both source and destination call `verify_servtd_attr()` on their own bound target TD. Reads `CURR_SERVTD_ATTR` from TDCS via `TDG.SERVTD.RD` and checks:
-   - `cur_servtd_attr == EXPECTED_SERVTD_ATTR` (hardcoded `0x0`) — ensures the VMM wrote the correct SERVTD_ATTR value (since SERVTD_ATTR is written by the untrusted VMM)
-9. **Approved hash write**: after MSK exchange, destination computes `SHA384(ServtdExt with cur_servtd_info_hash and cur_servtd_attr zeroed)` and writes it to `APPROVED_SERVTD_EXT_HASH` in TDCS.
+1. Receives ServtdExt (always 272 bytes — rejects any other length) and
+   Init_TDINFO (0 or 512 bytes) from wire.
+2. Stores ServtdExt in responder context for later use during MSK exchange.
+3. If Init_TDINFO is **empty**: runs only `authenticate_remote()` (standard
+   quote/event-log/policy checks against the source's current TDREPORT) and
+   skips the init-tdinfo verification block.
+4. If Init_TDINFO is **non-empty** (source's target TD has bit 17 = 1):
+   - **Standard policy checks** (POL-SRCv2-01..04): `authenticate_remote_common` (quote verification, event log, policy signature) → `evaluate_policy_common` + `evaluate_policy_backward` with local TCB as relative reference.
+   - **Init_TDINFO cross-check** (POL-SRCv2-05): calls `verify_peer_init_tdinfo_against_suppl_data()` — extracts `mrowner` and `mrownerconfig` from the source's *verified quote supplemental data*, then checks:
+     - Init_TDINFO's `mrowner` == source's quote `mrowner` (same policy signer)
+     - Init_TDINFO's `mrownerconfig[0..4]` (init policy SVN) ≤ source's quote `mrownerconfig[0..4]` (current policy SVN)
+     - Both `mrownerconfig[4..48]` must be all zeros
+     - ⚠️ **REVERT_ME TEST MODE**: failures are logged but do not abort.
+   - **Init_TDINFO integrity verification** (POL-SRCv2-06..07): calls `verify_init_tdinfo()` → `verify_servtd_hash()`:
+     - If `init_servtd_info_hash` is **all-zero** (host never provisioned it): skips hash check, returns parsed `TdInfo`. The allowlist gate below still validates the measurements.
+     - Otherwise: computes `SHA384(SHA384(masked_tdinfo) || SERVTD_TYPE || init_attr)` and compares to `init_servtd_info_hash`.
+     - ⚠️ **REVERT_ME TEST MODE**: hash mismatch is logged but returns `Ok` (soft-fail).
+     - **Enforced**: parse failure is hard-fail on malformed input.
+   - **Allowlist gate** (POL-SRCv2-08): `get_engine_svn_by_measurements()` — init MigTD's `mrtd`, `rtmr0`, `rtmr1`, `rtmr2`, `rtmr3` must be in `servtd_tcb_mapping`. **Enforced** (hard-fail on `SvnMismatch`). Skipped under `use-mock-quote` feature (mock binary has different MRTD).
+   - **Policy eval with init reference** (POL-SRCv2-09..10): `setup_evaluation_data_with_tdinfo()` → `evaluate_policy_common(eval_data_src, init_reference, skip_global=true)`. **Enforced** — policy failure aborts.
+5. **SERVTD_ATTR check** (at MSK exchange, `exchange_msk` in `session.rs`): both source and destination call `verify_servtd_attr()` on their own bound target TD. Reads `CURR_SERVTD_ATTR` from TDCS via `TDG.SERVTD.RD` and checks:
+   - `cur_servtd_attr == EXPECTED_SERVTD_ATTR` (hardcoded `0x0`) — ensures the VMM wrote the correct SERVTD_ATTR value (since SERVTD_ATTR is written by the untrusted VMM).
+   - When the destination's target TD has bit 17 = 0, `cur_servtd_attr` reads as zero and the check passes trivially.
+6. **Approved hash write**: after MSK exchange, destination always computes `SHA384(ServtdExt with cur_servtd_info_hash and cur_servtd_attr zeroed)` and writes it to `APPROVED_SERVTD_EXT_HASH` in MigTD's own TDCS via `TDG.VM.WR`. No bit-17 gating — the destination MigTD writes to its own TDCS, not the target TD's.
 
 ### Rebinding (old MigTD → new MigTD)
 
 **Old MigTD side** (SPDM requester, `spdm_req`):
-1. Reads `ServtdExt` from its bound target TD via `TDG.SERVTD.RD`.
-2. Obtains Init_TDINFO from VMM or local fallback.
-3. Sends both as VDM elements to the new MigTD.
+1. Reads `ServtdExt` from its bound target TD via `TDG.SERVTD.RD`. Always succeeds.
+2. If `!has_servtd_ext` and the VMM provided `init_td_info`, aborts with a misconfiguration error.
+3. If `has_servtd_ext`, obtains Init_TDINFO from VMM or local fallback. Otherwise sends zero-length Init_TDINFO.
+4. Sends the 272-byte ServtdExt and the (possibly empty) Init_TDINFO as VDM elements.
 
 **New MigTD side** (SPDM responder, `spdm_rsp`):
-1. Receives ServtdExt and Init_TDINFO from wire.
+1. Receives ServtdExt (always 272 bytes — rejects any other length) and Init_TDINFO (0 or 512 bytes) from wire.
 2. Calls `authenticate_rebinding_old()` which does:
-   - **Init_TDINFO cross-check against TDREPORT**: calls `verify_peer_init_tdinfo_against_owner()` — uses `mrowner` and `mrownerconfig` from the old MigTD's *verified TDREPORT* (not quote supplemental data). Same checks as migration: mrowner match + init SVN ≤ current SVN. ⚠️ **REVERT_ME TEST MODE**: logged, non-fatal.
-   - **Init_TDINFO integrity verification against ServtdExt**: calls `verify_init_tdinfo()` → `verify_servtd_hash()`. Same logic as migration (all-zero bypass + TEST MODE soft-fail on mismatch). See migration step 5 above.
-   - **Allowlist gate**: same `get_engine_svn_by_measurements()` check as migration step 6.
-   - **Policy evaluation using Init_TDINFO as relative reference**: see [detailed breakdown below](#policy-evaluation-with-init_tdinfo-as-relative-reference).
+   - If Init_TDINFO is **empty** (old MigTD's target TD has bit 17 = 0): skip the init-tdinfo verification block entirely. Evaluate the source's current TDREPORT against the local-TCB reference policy (`evaluate_policy_common` with `get_local_tcb_evaluation_info` as the reference, `skip_global=true`). Continue to backward-policy evaluation.
+   - If Init_TDINFO is **non-empty**:
+     - **Init_TDINFO cross-check against TDREPORT**: calls `verify_peer_init_tdinfo_against_owner()` — uses `mrowner` and `mrownerconfig` from the old MigTD's *verified TDREPORT* (not quote supplemental data). Same checks as migration: mrowner match + init SVN ≤ current SVN. ⚠️ **REVERT_ME TEST MODE**: logged, non-fatal.
+     - **Init_TDINFO integrity verification against ServtdExt**: calls `verify_init_tdinfo()` → `verify_servtd_hash()`. Same logic as migration (all-zero bypass + TEST MODE soft-fail on mismatch).
+     - **Allowlist gate**: same `get_engine_svn_by_measurements()` check using `mrtd`, `rtmr0..rtmr3` as in migration.
+     - **Policy evaluation using Init_TDINFO as relative reference**: see [detailed breakdown below](#policy-evaluation-with-init_tdinfo-as-relative-reference).
 3. Stores ServtdExt in responder context.
-4. **Approved hash write**: same as migration — computes `SHA384(ServtdExt with cur fields zeroed)` and writes to `APPROVED_SERVTD_EXT_HASH`.
-5. **Rebind attr write**: additionally writes `ServtdExt.cur_servtd_attr` via `write_servtd_rebind_attr()` — rebind-specific, not done in migration. For migration, MigTD only reads and verifies `cur_servtd_attr == 0x0` (hardcoded). For rebind, the new MigTD writes the expected value and the TDX module enforces that the actual SERVTD_ATTR matches what the MigTD wrote.
+4. **Approved hash write**: always computes `SHA384(ServtdExt with cur fields zeroed)` and writes to `APPROVED_SERVTD_EXT_HASH` in MigTD's own TDCS via `TDG.VM.WR`. No bit-17 gating.
+5. **Rebind attr write**: additionally writes `ServtdExt.cur_servtd_attr` via `write_servtd_rebind_attr()` — rebind-specific, not done in migration. The new MigTD writes the expected value and the TDX module enforces that the actual SERVTD_ATTR matches what the MigTD wrote.
 
 ---
 

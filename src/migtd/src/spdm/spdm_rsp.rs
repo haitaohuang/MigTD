@@ -518,7 +518,8 @@ pub fn handle_exchange_mig_attest_info_req(
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
-    // SERVTD_EXT from src — zero-length means source's target TD has no SERVTD_EXT
+    // SERVTD_EXT — always 272 bytes (zero-filled when opted out). init_tdinfo
+    // length is the opt-in signal.
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
         error!(
@@ -534,23 +535,18 @@ pub fn handle_exchange_mig_attest_info_req(
     let servtd_ext_bytes_vec = servtd_ext_bytes.to_vec();
 
     // Store SERVTD_EXT in ResponderContextEx for later use during MSK exchange.
-    // None when source's target TD does not support SERVTD_EXT.
     #[cfg(feature = "policy_v2")]
     unsafe {
         let spdm_responder_ex = upcast_mut(responder_context);
-        spdm_responder_ex.servtd_ext = if servtd_ext_bytes.is_empty() {
-            log::info!("Source target TD has no SERVTD_EXT, skipping init_tdinfo verification\n");
-            None
-        } else {
+        spdm_responder_ex.servtd_ext =
             Some(ServtdExt::read_from_bytes(servtd_ext_bytes).ok_or_else(|| {
                 error!(
-                    "Failed to parse SERVTD_EXT: length {} < expected {}\n",
+                    "Failed to parse SERVTD_EXT: length {} != expected {}\n",
                     servtd_ext_bytes.len(),
                     core::mem::size_of::<ServtdExt>()
                 );
                 SPDM_STATUS_INVALID_MSG_SIZE
-            })?)
-        };
+            })?);
     };
 
     // Init TDINFO from src — zero-length when SERVTD_EXT not supported
@@ -758,13 +754,12 @@ fn rsp_verify_peer_attestation_v2(
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
 
-    // 2. Authenticate remote. If init TDINFO and ServtdExt are available,
-    //    also verify init TDINFO integrity and evaluate policy with init reference.
-    //    When SERVTD_EXT is unsupported (zero-length wire elements), skip init
-    //    verification — the standard quote/policy checks still run.
+    // 2. Authenticate remote. Empty init_tdinfo indicates the source's target
+    //    TD has SERVTD_EXT opted out — skip init verification; standard
+    //    quote/policy checks still run.
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
-        let verified_report_peer = if !peer_init_td_info.is_empty() && !servtd_ext_peer.is_empty() {
+        let verified_report_peer = if !peer_init_td_info.is_empty() {
             match mig_policy::authenticate_migration_source_with_init_tdinfo(
                 quote_peer,
                 peer_data,
@@ -785,7 +780,10 @@ fn rsp_verify_peer_attestation_v2(
                 Ok(s) => s,
             }
         } else {
-            log::info!("No SERVTD_EXT/init_tdinfo — using standard policy check only\n");
+            log::info!(
+                "Source's target TD has SERVTD_EXT opted out (empty init_tdinfo) — \
+                 using standard policy check only\n"
+            );
             match mig_policy::authenticate_remote(false, quote_peer, peer_data, event_log_peer) {
                 Err(e) => {
                     error!("Policy v2 check failed (no init_tdinfo): {:x?}\n", e);
@@ -1134,7 +1132,7 @@ pub fn handle_exchange_rebind_attest_info_req(
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let mig_policy_hash_src_vec = mig_policy_hash_src.to_vec();
 
-    // SERVTD_EXT — zero-length means source's target TD has no SERVTD_EXT
+    // SERVTD_EXT — always 272 bytes (zero-filled when opted out).
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
         error!(
@@ -1143,12 +1141,21 @@ pub fn handle_exchange_rebind_attest_info_req(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     };
+    if vdm_element.length as usize != core::mem::size_of::<ServtdExt>() {
+        error!(
+            "Invalid VDM message SerVtdExt length: {} (expected {})\n",
+            vdm_element.length,
+            core::mem::size_of::<ServtdExt>()
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_SIZE);
+    }
     let servtd_ext = reader
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let servtd_ext_vec = servtd_ext.to_vec();
 
-    // TD report init — zero-length when SERVTD_EXT not supported
+    // TD report init — empty when SERVTD_EXT opted out (the opt-in signal);
+    // 512 bytes otherwise.
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::TdReportInit {
         error!(
