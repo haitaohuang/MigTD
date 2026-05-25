@@ -350,35 +350,28 @@ mod v2 {
                 ))
                 .ok_or(PolicyError::SvnMismatch)?;
             #[cfg(feature = "use-mock-quote")]
-            log::warn!("use-mock-quote: skipping get_engine_svn_by_measurements allowlist check\n");
-
-            // Use local policy's tcb_mapping with init tdinfo measurements
-            let relative_reference = setup_evaluation_data_with_tdinfo(&init_td_info, policy)?;
-            policy.policy_data.evaluate_policy_common(
-                &evaluation_data_src,
-                &relative_reference,
-                true,
-            )?;
+            {
+                let _ = &init_td_info;
+                log::warn!(
+                    "use-mock-quote: skipping get_engine_svn_by_measurements allowlist check\n"
+                );
+            }
         } else {
-            // Source's target TD has SERVTD_EXT opted out — there is no
-            // signed init_tdinfo to verify and no init_td_info to feed into
-            // the allowlist. Evaluate the source's CURRENT TDREPORT against
-            // the local-TCB reference policy. The 272-byte servtd_ext on the
-            // wire is zero-filled by definition and ignored here.
             log::info!(
                 "authenticate_rebinding_old: peer's target TD has SERVTD_EXT opted out; \
                  skipping init_tdinfo verification\n"
             );
-            let relative_reference = get_local_tcb_evaluation_info()?;
-            policy.policy_data.evaluate_policy_common(
-                &evaluation_data_src,
-                &relative_reference,
-                true,
-            )?;
         }
 
-        // If backward policy exists, evaluate the migration src based on it.
+        // Evaluate against the local-TCB reference.
         let relative_reference = get_local_tcb_evaluation_info()?;
+        policy.policy_data.evaluate_policy_common(
+            &evaluation_data_src,
+            &relative_reference,
+            true,
+        )?;
+
+        // If backward policy exists, evaluate the migration src based on it.
         policy.policy_data.evaluate_policy_backward(
             &evaluation_data_src,
             &relative_reference,
@@ -659,36 +652,6 @@ mod v2 {
         Ok(rtmrs)
     }
 
-    fn setup_evaluation_data_with_tdinfo(
-        td_info: &TdInfo,
-        policy: &VerifiedPolicy,
-    ) -> Result<PolicyEvaluationInfo, PolicyError> {
-        let migtd_svn = policy.servtd_tcb_mapping.get_engine_svn_by_measurements(
-            &Measurements::new_from_bytes(
-                &td_info.mrtd,
-                &td_info.rtmr0,
-                &td_info.rtmr1,
-                Some(&td_info.rtmr2),
-                Some(&td_info.rtmr3),
-            ),
-        );
-
-        let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
-
-        Ok(PolicyEvaluationInfo {
-            tee_tcb_svn: None,
-            tcb_date: None,
-            tcb_status: None,
-            tcb_evaluation_number: None,
-            fmspc: None,
-            migtd_isvsvn: migtd_svn,
-            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
-            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
-            pck_crl_num: None,
-            root_ca_crl_num: None,
-        })
-    }
-
     fn setup_evaluation_data(
         fmspc: [u8; 6],
         suppl_data: &[u8],
@@ -965,12 +928,9 @@ mod v2 {
 
     /// Destination-side migration helper: verify the source MigTD's
     /// quote/event log, cross-check init TDINFO against the quote's
-    /// supplemental data, verify init TDINFO integrity against ServtdExt,
-    /// and evaluate policy using init TDINFO measurements as the reference.
+    /// supplemental data, and verify init TDINFO integrity against ServtdExt.
     ///
-    /// This mirrors the checks that `authenticate_rebinding_old` performs
-    /// for the rebinding path, ensuring parity between migration and
-    /// rebinding attestation.
+    /// Policy evaluation is performed against the local TCB reference only.
     ///
     /// Returns the verified supplemental data on success so the caller can
     /// reuse it for SPDM-level bindings (e.g., REPORTDATA / TH1).
@@ -1026,7 +986,7 @@ mod v2 {
         }
         log::info!("BC> POL-SRCv2-05 verify_peer_init_tdinfo_against_suppl_data done\n");
 
-        // Verify init TDINFO integrity against ServtdExt hash
+        // Verify init TDINFO integrity against ServtdExt hash.
         let servtd_ext_obj =
             ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
 
@@ -1048,17 +1008,11 @@ mod v2 {
             ))
             .ok_or(PolicyError::SvnMismatch)?;
         #[cfg(feature = "use-mock-quote")]
-        log::warn!("use-mock-quote: skipping get_engine_svn_by_measurements allowlist check\n");
+        {
+            let _ = &init_td_info;
+            log::warn!("use-mock-quote: skipping get_engine_svn_by_measurements allowlist check\n");
+        }
         log::info!("BC> POL-SRCv2-07 get_engine_svn_by_measurements ok\n");
-
-        // Policy eval with init TDINFO as relative reference (skip global —
-        // platform checks already done above with skip_global=false)
-        let init_reference = setup_evaluation_data_with_tdinfo(&init_td_info, policy)?;
-        log::info!("BC> POL-SRCv2-08 setup_evaluation_data_with_tdinfo ok\n");
-        policy
-            .policy_data
-            .evaluate_policy_common(&evaluation_data_src, &init_reference, true)?;
-        log::info!("BC> POL-SRCv2-09 evaluate_policy_common (init ref) ok\n");
 
         Ok(suppl_data)
     }
