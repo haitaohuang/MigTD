@@ -376,6 +376,16 @@ pub fn handle_exchange_mig_attest_info_req(
     vendor_defined_rsp_payload: &mut [u8],
 ) -> SpdmResult<usize> {
     log::info!("BC> RSP-ATT-00 handle_exchange_mig_attest_info_req ENTER\n");
+
+    let spdm_responder_ex = unsafe { upcast_mut(responder_context) };
+    if !matches!(
+        &spdm_responder_ex.info,
+        ResponderContextExInfo::MigrationInformation { .. }
+    ) {
+        error!("Migration info is not set in responder context.\n");
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+
     let session_id = if session_id.is_some() {
         session_id
     } else {
