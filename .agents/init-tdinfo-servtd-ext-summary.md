@@ -102,10 +102,8 @@ hang"** while preserving full verification when bit 17 is one.
      - Both `mrownerconfig[4..48]` must be all zeros
      - ⚠️ **REVERT_ME TEST MODE**: failures are logged but do not abort.
    - **Init_TDINFO integrity verification** (POL-SRCv2-06): calls `verify_init_tdinfo()` → `verify_servtd_hash()`:
-     - If `init_servtd_info_hash` is **all-zero** (host never provisioned it): skips hash check, returns parsed `TdInfo`. The allowlist gate below still validates the measurements.
-     - Otherwise: computes `SHA384(SHA384(masked_tdinfo) || SERVTD_TYPE || init_attr)` and compares to `init_servtd_info_hash`.
-     - ⚠️ **REVERT_ME TEST MODE**: hash mismatch is logged but returns `Ok` (soft-fail).
-     - **Enforced**: parse failure is hard-fail on malformed input.
+     - Computes `SHA384(SHA384(masked_tdinfo) || SERVTD_TYPE || init_attr)` and compares to `init_servtd_info_hash`.
+     - **Enforced** (hard-fail): any mismatch — including an all-zero `init_servtd_info_hash` — returns `Err(PolicyError::InvalidTdReport)`. There is no all-zero bypass or soft-fail.
    - **Allowlist gate** (POL-SRCv2-07): `get_engine_svn_by_measurements()` — init MigTD's `mrtd`, `rtmr0`, `rtmr1`, `rtmr2`, `rtmr3` must be in `servtd_tcb_mapping`. **Enforced** (hard-fail on `SvnMismatch`). Skipped under `use-mock-quote` feature (mock binary has different MRTD). This is the **only** policy-side gate applied to the init→source historical transition.
    - **NO init-TDINFO relative-reference policy evaluation.** Earlier versions called `evaluate_policy_common(eval_data_src, init_reference, skip_global=true)` here; that has been removed (see Historical notes). The destination's current `mig_policy` is evaluated against the source's *current* TDREPORT/quote (POL-SRCv2-03..04 above) — not retroactively against the historical init→source transition, which may have spanned several intermediate MigTDs whose evidence we do not have.
 5. **SERVTD_ATTR check** (at MSK exchange, `exchange_msk` in `session.rs`): both source and destination call `verify_servtd_attr()` on their own bound target TD. Reads `CURR_SERVTD_ATTR` from TDCS via `TDG.SERVTD.RD` and checks:
@@ -127,7 +125,7 @@ hang"** while preserving full verification when bit 17 is one.
    - If Init_TDINFO is **empty** (old MigTD's target TD has bit 17 = 0): skip the init-tdinfo verification block entirely. Evaluate the source's current TDREPORT against the local-TCB reference policy (`evaluate_policy_common` with `get_local_tcb_evaluation_info` as the reference, `skip_global=true`). Continue to backward-policy evaluation.
    - If Init_TDINFO is **non-empty**:
      - **Init_TDINFO cross-check against TDREPORT**: calls `verify_peer_init_tdinfo_against_owner()` — uses `mrowner` and `mrownerconfig` from the old MigTD's *verified TDREPORT* (not quote supplemental data). Same checks as migration: mrowner match + init SVN ≤ current SVN. ⚠️ **REVERT_ME TEST MODE**: logged, non-fatal.
-     - **Init_TDINFO integrity verification against ServtdExt**: calls `verify_init_tdinfo()` → `verify_servtd_hash()`. Same logic as migration (all-zero bypass + TEST MODE soft-fail on mismatch).
+     - **Init_TDINFO integrity verification against ServtdExt**: calls `verify_init_tdinfo()` → `verify_servtd_hash()`. Same logic as migration (hard-fail on any mismatch, including all-zero `init_servtd_info_hash`).
      - **Allowlist gate**: same `get_engine_svn_by_measurements()` check using `mrtd`, `rtmr0..rtmr3` as in migration. **Enforced** — the only policy-side gate for the init→source historical transition.
      - **NO init-TDINFO relative-reference policy evaluation** (removed; see Historical notes). The new MigTD's current policy is evaluated against the old MigTD's *current* TDREPORT only, via `evaluate_policy_common` / `evaluate_policy_backward` with `get_local_tcb_evaluation_info` as the reference (run unconditionally, outside the init_tdinfo branch).
 3. Stores ServtdExt in responder context.
@@ -156,8 +154,7 @@ Several checks are currently soft-fail to enable testing against hosts that have
 | Check | Status | Notes |
 |---|---|---|
 | `verify_peer_init_tdinfo_against_suppl_data` / `_against_owner` | ⚠️ Soft-fail | MROWNER/MROWNERCONFIG may not be provisioned yet |
-| `verify_servtd_hash` (hash mismatch) | ⚠️ Soft-fail | Returns `Ok` on mismatch with diagnostic dump |
-| `verify_servtd_hash` (all-zero init hash) | Bypass | Skips check entirely, relies on allowlist gate |
+| `verify_servtd_hash` (hash mismatch, including all-zero) | Enforced | Hard-fail: returns `Err(PolicyError::InvalidTdReport)` |
 | `verify_init_tdinfo` (parse + dispatch) | Enforced | Malformed input is a hard error |
 | `get_engine_svn_by_measurements` | Enforced | Hard-fail on `SvnMismatch` (skipped under `use-mock-quote`) |
 
