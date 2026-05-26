@@ -961,11 +961,7 @@ async fn migration_src_exchange_msk(
     let (mut spdm_requester, io_ref) = spdm::spdm_requester(transport)
         .map_err(|_| map_spdm_setup_err(info.mig_info.mig_request_id))?;
 
-    // NOTE: SPDM source historically calls `exchange_info(.., false)` (IMPORT
-    // versions) and `cal_mig_version(false, ...)` — asymmetric with the TLS
-    // source path (`is_src=true`). Preserved verbatim by this refactor to
-    // avoid a behavior change. Tracked as a separate behavior bug.
-    let exchange_information = exchange_info(&info.mig_info, false).map_err(|e| {
+    let exchange_information = exchange_info(&info.mig_info, info.is_src()).map_err(|e| {
         log::error!(migration_request_id = info.mig_info.mig_request_id;
             "exchange_msk: exchange_info error: {:?}\n", e);
         e
@@ -984,8 +980,8 @@ async fn migration_src_exchange_msk(
     )
     .await?;
 
-    let mig_ver =
-        cal_mig_version(false, &exchange_information, &remote_information).map_err(|e| {
+    let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)
+        .map_err(|e| {
             log::error!(migration_request_id = info.mig_info.mig_request_id;
                 "exchange_msk: cal_mig_version error: {:?}\n", e);
             e
@@ -1015,7 +1011,7 @@ async fn migration_dst_exchange_msk(
 
     // `exchange_information` must outlive `spdm_responder` so that the
     // responder context's `info` variant can borrow it; declare it first.
-    let exchange_information = exchange_info(&info.mig_info, false).map_err(|e| {
+    let exchange_information = exchange_info(&info.mig_info, info.is_src()).map_err(|e| {
         log::error!(migration_request_id = info.mig_info.mig_request_id;
             "exchange_msk: exchange_info error: {:?}\n", e);
         e
@@ -1054,8 +1050,8 @@ async fn migration_dst_exchange_msk(
             e
         },
     )?;
-    let mig_ver =
-        cal_mig_version(false, &exchange_information, &remote_information).map_err(|e| {
+    let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)
+        .map_err(|e| {
             log::error!(migration_request_id = info.mig_info.mig_request_id;
                 "exchange_msk: cal_mig_version error: {:?}\n", e);
             e
