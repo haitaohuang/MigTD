@@ -600,22 +600,44 @@ const LOG_TRUNCATE_TAIL: usize = 32;
 
 /// Truncate `msg` if it exceeds `LOG_TRUNCATE_THRESHOLD`.
 /// Returns the original message unchanged when it fits, or a replacement of
-/// the form: `[first 64 bytes]... [last 16 bytes], log truncated number of bytes: N`
+/// the form: `[first ~128 bytes]... [last ~32 bytes], log truncated number of bytes: N`
+///
+/// Head and tail boundaries are adjusted to the nearest UTF-8 character
+/// boundary so that multi-byte characters are never split.
 fn maybe_truncate(msg: Vec<u8>) -> Vec<u8> {
     if msg.len() <= LOG_TRUNCATE_THRESHOLD {
         return msg;
     }
-    // Strip trailing newline so it doesn't appear between tail and the notice
-    let data = if msg.last() == Some(&b'\n') {
-        &msg[..msg.len() - 1]
-    } else {
-        &msg
-    };
+    // Strip all trailing newlines so they don't appear between tail and the notice.
+    let mut data_end = msg.len();
+    while data_end > 0 && msg[data_end - 1] == b'\n' {
+        data_end -= 1;
+    }
+    let data = &msg[..data_end];
     let total = data.len();
-    let head = &data[..LOG_TRUNCATE_HEAD];
-    let tail = &data[total - LOG_TRUNCATE_TAIL..];
-    let truncated = total - LOG_TRUNCATE_HEAD - LOG_TRUNCATE_TAIL;
-    let mut out = Vec::with_capacity(LOG_TRUNCATE_HEAD + LOG_TRUNCATE_TAIL + 64);
+
+    // Find UTF-8-safe cut points. Input originates from format!() so it is
+    // valid UTF-8, but fall back to raw byte offsets if it somehow isn't.
+    let (head_end, tail_start) = if let Ok(s) = core::str::from_utf8(data) {
+        // floor_char_boundary: largest boundary <= LOG_TRUNCATE_HEAD
+        let mut h = LOG_TRUNCATE_HEAD.min(s.len());
+        while h > 0 && !s.is_char_boundary(h) {
+            h -= 1;
+        }
+        // ceil_char_boundary: smallest boundary >= total - LOG_TRUNCATE_TAIL
+        let mut t = total.saturating_sub(LOG_TRUNCATE_TAIL);
+        while t < s.len() && !s.is_char_boundary(t) {
+            t += 1;
+        }
+        (h, t)
+    } else {
+        (LOG_TRUNCATE_HEAD, total.saturating_sub(LOG_TRUNCATE_TAIL))
+    };
+
+    let head = &data[..head_end];
+    let tail = &data[tail_start..];
+    let truncated = tail_start - head_end;
+    let mut out = Vec::with_capacity(head.len() + tail.len() + 64);
     out.extend_from_slice(head);
     out.extend_from_slice(b"... ");
     out.extend_from_slice(tail);
@@ -667,7 +689,7 @@ impl log::Log for VmmLoggerBackend {
             // Also output to debug console for development (skip in test mode to avoid issues)
             #[cfg(all(not(test), debug_assertions))]
             {
-                let msg_str = core::str::from_utf8(&msg).unwrap_or("<non-utf8>");
+                let msg_str = alloc::string::String::from_utf8_lossy(&msg);
                 if mig_request_id != MIGRATION_REQUEST_ID_SENTINEL {
                     td_logger::dbg_write_string(&format!(
                         "{} - [req_id: {}] {}",
@@ -1673,6 +1695,33 @@ mod test {
             !result.windows(2).any(|w| w == b"\n\n"),
             "should not contain double newline: {}",
             String::from_utf8_lossy(&result)
+        );
+    }
+
+    #[test]
+    fn test_maybe_truncate_multibyte_utf8() {
+        // Build a string where the LOG_TRUNCATE_HEAD and LOG_TRUNCATE_TAIL
+        // byte offsets fall in the middle of multi-byte characters.
+        // 'é' is 2 bytes (0xC3 0xA9); fill with 'é' so every odd offset
+        // is mid-character.
+        let c = 'é'; // 2 bytes each
+        let char_count = (LOG_TRUNCATE_THRESHOLD / 2) + 60; // well over threshold in bytes
+        let mut s: String = core::iter::repeat(c).take(char_count).collect();
+        s.push('\n');
+        let msg = s.into_bytes();
+        assert!(msg.len() > LOG_TRUNCATE_THRESHOLD);
+
+        let result = maybe_truncate(msg);
+        // The result must be valid UTF-8 (no split characters)
+        let result_str =
+            core::str::from_utf8(&result).expect("truncated output must be valid UTF-8");
+        assert!(
+            result_str.contains("... "),
+            "should contain separator: {result_str}"
+        );
+        assert!(
+            result_str.contains("log truncated number of bytes:"),
+            "should contain truncation notice: {result_str}"
         );
     }
 }
