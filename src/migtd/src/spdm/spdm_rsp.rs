@@ -528,8 +528,7 @@ pub fn handle_exchange_mig_attest_info_req(
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
-    // SERVTD_EXT — always 272 bytes (zero-filled when opted out). init_tdinfo
-    // length is the opt-in signal.
+    // SERVTD_EXT — 272 bytes when opted in, empty when opted out.
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
         error!(
@@ -538,8 +537,17 @@ pub fn handle_exchange_mig_attest_info_req(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
+    let servtd_ext_len = vdm_element.length as usize;
+    if servtd_ext_len != 0 && servtd_ext_len != core::mem::size_of::<ServtdExt>() {
+        error!(
+            "Invalid VDM message SerVtdExt length: {} (expected 0 or {})\n",
+            servtd_ext_len,
+            core::mem::size_of::<ServtdExt>()
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_SIZE);
+    }
     let servtd_ext_bytes = reader
-        .take(vdm_element.length as usize)
+        .take(servtd_ext_len)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     #[cfg(feature = "policy_v2")]
     let servtd_ext_bytes_vec = servtd_ext_bytes.to_vec();
@@ -548,7 +556,9 @@ pub fn handle_exchange_mig_attest_info_req(
     #[cfg(feature = "policy_v2")]
     unsafe {
         let spdm_responder_ex = upcast_mut(responder_context);
-        spdm_responder_ex.servtd_ext =
+        spdm_responder_ex.servtd_ext = if servtd_ext_bytes.is_empty() {
+            None
+        } else {
             Some(ServtdExt::read_from_bytes(servtd_ext_bytes).ok_or_else(|| {
                 error!(
                     "Failed to parse SERVTD_EXT: length {} != expected {}\n",
@@ -556,10 +566,11 @@ pub fn handle_exchange_mig_attest_info_req(
                     core::mem::size_of::<ServtdExt>()
                 );
                 SPDM_STATUS_INVALID_MSG_SIZE
-            })?);
+            })?)
+        };
     };
 
-    // Init TDINFO from src — zero-length when SERVTD_EXT not supported
+    // Init TDINFO from src — empty when SERVTD_EXT not opted in
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::TdReportInit {
         error!(
@@ -576,6 +587,15 @@ pub fn handle_exchange_mig_attest_info_req(
             crate::migration::TD_INFO_SIZE
         );
         return Err(SPDM_STATUS_INVALID_MSG_SIZE);
+    }
+    // Consistency: servtd_ext and init_tdinfo must be both present or both absent.
+    #[cfg(feature = "policy_v2")]
+    if (servtd_ext_len == 0) != (vdm_element.length == 0) {
+        error!(
+            "Inconsistent SERVTD_EXT/init_tdinfo: servtd_ext_len={}, init_tdinfo_len={}\n",
+            servtd_ext_len, vdm_element.length
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
     let td_report_init = reader
         .take(vdm_element.length as usize)
@@ -1142,7 +1162,7 @@ pub fn handle_exchange_rebind_attest_info_req(
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let mig_policy_hash_src_vec = mig_policy_hash_src.to_vec();
 
-    // SERVTD_EXT — always 272 bytes (zero-filled when opted out).
+    // SERVTD_EXT — 272 bytes when opted in, empty when opted out.
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
         error!(
@@ -1151,21 +1171,21 @@ pub fn handle_exchange_rebind_attest_info_req(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     };
-    if vdm_element.length as usize != core::mem::size_of::<ServtdExt>() {
+    let servtd_ext_len = vdm_element.length as usize;
+    if servtd_ext_len != 0 && servtd_ext_len != core::mem::size_of::<ServtdExt>() {
         error!(
-            "Invalid VDM message SerVtdExt length: {} (expected {})\n",
-            vdm_element.length,
+            "Invalid VDM message SerVtdExt length: {} (expected 0 or {})\n",
+            servtd_ext_len,
             core::mem::size_of::<ServtdExt>()
         );
         return Err(SPDM_STATUS_INVALID_MSG_SIZE);
     }
     let servtd_ext = reader
-        .take(vdm_element.length as usize)
+        .take(servtd_ext_len)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let servtd_ext_vec = servtd_ext.to_vec();
 
-    // TD report init — empty when SERVTD_EXT opted out (the opt-in signal);
-    // 512 bytes otherwise.
+    // TD report init — empty when SERVTD_EXT opted out.
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::TdReportInit {
         error!(
@@ -1181,6 +1201,14 @@ pub fn handle_exchange_rebind_attest_info_req(
             crate::migration::TD_INFO_SIZE
         );
         return Err(SPDM_STATUS_INVALID_MSG_SIZE);
+    }
+    // Consistency: servtd_ext and init_tdinfo must be both present or both absent.
+    if (servtd_ext_len == 0) != (vdm_element.length == 0) {
+        error!(
+            "Inconsistent SERVTD_EXT/init_tdinfo: servtd_ext_len={}, init_tdinfo_len={}\n",
+            servtd_ext_len, vdm_element.length
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
     let td_report_init = reader
         .take(vdm_element.length as usize)
@@ -1396,17 +1424,20 @@ pub fn handle_exchange_rebind_info_req(
 
     let mut token = <[u8; 32]>::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
+    write_rebinding_session_token(&token)?;
+
     let servtd_ext = unsafe {
         let spdm_responder_ex = upcast_mut(responder_context);
-        spdm_responder_ex
-            .servtd_ext
-            .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?
+        spdm_responder_ex.servtd_ext
     };
 
-    write_rebinding_session_token(&token)?;
-    let approved_hash = servtd_ext.calculate_approved_servtd_ext_hash()?;
-    write_approved_servtd_ext_hash(Some(approved_hash.as_slice()))?;
-    write_servtd_rebind_attr(&servtd_ext.cur_servtd_attr)?;
+    if let Some(ext) = servtd_ext {
+        let approved_hash = ext.calculate_approved_servtd_ext_hash()?;
+        write_approved_servtd_ext_hash(Some(approved_hash.as_slice()))?;
+        write_servtd_rebind_attr(&ext.cur_servtd_attr)?;
+    } else {
+        write_approved_servtd_ext_hash(None)?;
+    }
     token.zeroize();
 
     let mut writer = Writer::init(vendor_defined_rsp_payload);

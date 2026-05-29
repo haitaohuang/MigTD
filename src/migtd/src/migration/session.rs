@@ -1069,14 +1069,13 @@ async fn migration_dst_exchange_msk(
 
     #[cfg(feature = "policy_v2")]
     {
-        // servtd_ext is always present (zero-filled when the target TD has
-        // SERVTD_EXT opted out). The write targets MigTD's own TDCS via
-        // TDG.VM.WR, so it succeeds regardless of bit 17.
-        let ext = spdm_responder
-            .servtd_ext
-            .ok_or(MigrationResult::InvalidParameter)?;
-        let hash = ext.calculate_approved_servtd_ext_hash()?;
-        write_approved_servtd_ext_hash(Some(hash.as_slice()))?;
+        // Write the approved SERVTD_EXT hash when opted in; no-op when opted out.
+        if let Some(ext) = spdm_responder.servtd_ext {
+            let hash = ext.calculate_approved_servtd_ext_hash()?;
+            write_approved_servtd_ext_hash(Some(hash.as_slice()))?;
+        } else {
+            write_approved_servtd_ext_hash(None)?;
+        }
     }
 
     log::info!(migration_request_id = info.mig_info.mig_request_id; "Set MSK and report status\n");

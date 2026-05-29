@@ -422,17 +422,27 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         .extend_from_slice(&mig_policy_src_hash)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
-    // SERVTD_EXT: always send a 272-byte payload. Zero-filled when the
-    // target TD has SERVTD_EXT opted out; init_tdinfo length is the opt-in signal.
-    let has_servtd_ext;
+    // SERVTD_EXT: send 272 bytes when opted in, empty when opted out.
+    // init_tdinfo follows the same: present when opted in, empty when opted out.
     {
         use crate::migration::servtd_ext::read_servtd_ext;
 
-        let (servtd_ext, opted_in) =
-            read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid)
-                .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
-        has_servtd_ext = opted_in;
-        let ext_bytes = servtd_ext.as_bytes();
+        let servtd_ext = read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid)
+            .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+
+        // Reject VMM misconfiguration: init_tdinfo provided but target TD opted out.
+        #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+        if servtd_ext.is_none() && mig_info.init_td_info_if_present().is_some() {
+            log::error!(
+                "Misconfiguration: VMM provided init_tdinfo but target TD has no SERVTD_EXT\n"
+            );
+            return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+        }
+
+        let ext_bytes: &[u8] = match &servtd_ext {
+            Some(ext) => ext.as_bytes(),
+            None => &[],
+        };
         let servtd_ext_element = VdmMessageElement {
             element_type: VdmMessageElementType::SerVtdExt,
             length: ext_bytes.len() as u32,
@@ -440,30 +450,20 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         cnt += servtd_ext_element
             .encode(&mut writer)
             .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-        cnt += writer
-            .extend_from_slice(ext_bytes)
-            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
-    }
+        if !ext_bytes.is_empty() {
+            cnt += writer
+                .extend_from_slice(ext_bytes)
+                .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+        }
 
-    // Misconfiguration check: if VMM provided init_tdinfo but target TD does not
-    // support SERVTD_EXT, the init_tdinfo cannot be integrity-verified by the
-    // destination (no init_servtd_info_hash). Reject early on sender side.
-    #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
-    if !has_servtd_ext && mig_info.init_td_info_if_present().is_some() {
-        log::error!("Misconfiguration: VMM provided init_tdinfo but target TD has no SERVTD_EXT\n");
-        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
-    }
-
-    // Init TDINFO: send zero-length if target TD has no SERVTD_EXT (init_tdinfo
-    // cannot be verified without init_servtd_info_hash). Otherwise use VMM-provided
-    // init_td_info if available, or fall back to local tdcall_report.
-    {
+        // Init TDINFO: present only when SERVTD_EXT is opted in.
+        // When opted in, use VMM-provided init_td_info or fall back to local tdcall_report.
         #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
         let tdinfo_init_local;
         #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
         let tdinfo_init_owned: alloc::vec::Vec<u8>;
 
-        let tdinfo_init: &[u8] = if !has_servtd_ext {
+        let tdinfo_init: &[u8] = if servtd_ext.is_none() {
             &[]
         } else {
             #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
@@ -1102,15 +1102,13 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
     let binding_handle = rebind_info.binding_handle;
     let target_td_uuid = &rebind_info.target_td_uuid;
 
-    // Always send a 272-byte SERVTD_EXT (zero-filled when opted out).
-    // init_tdinfo length below is the opt-in signal.
-    let (servtd_ext, has_servtd_ext) = read_servtd_ext(binding_handle, target_td_uuid)
+    // Send 272-byte SERVTD_EXT when opted in, empty when opted out.
+    let servtd_ext = read_servtd_ext(binding_handle, target_td_uuid)
         .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
 
-    // Misconfiguration: VMM provided init_tdinfo but target TD has no SERVTD_EXT.
-    // The destination cannot verify it without init_servtd_info_hash.
+    // Reject VMM misconfiguration: init_tdinfo provided but target TD opted out.
     #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
-    if !has_servtd_ext && rebind_info.init_td_info_if_present().is_some() {
+    if servtd_ext.is_none() && rebind_info.init_td_info_if_present().is_some() {
         log::error!("Misconfiguration: VMM provided init_tdinfo but target TD has no SERVTD_EXT\n");
         return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
     }
@@ -1118,7 +1116,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
     // Resolve init TDINFO_STRUCT when SERVTD_EXT is opted in: use VMM-provided
     // bytes if present, else fall back to local self-report. Skipped when opted out.
     let local_td_info;
-    let init_td_info: Option<&[u8; crate::migration::TD_INFO_SIZE]> = if has_servtd_ext {
+    let init_td_info: Option<&[u8; crate::migration::TD_INFO_SIZE]> = if let Some(_) = &servtd_ext {
         Some(match rebind_info.init_td_info_if_present() {
             Some(t) => {
                 log::trace!(
@@ -1148,7 +1146,10 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         );
     }
 
-    let ext_bytes = servtd_ext.as_bytes();
+    let ext_bytes: &[u8] = match &servtd_ext {
+        Some(ext) => ext.as_bytes(),
+        None => &[],
+    };
     let servtd_ext_element = VdmMessageElement {
         element_type: VdmMessageElementType::SerVtdExt,
         length: ext_bytes.len() as u32,
@@ -1156,14 +1157,16 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
     cnt += servtd_ext_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer
-        .extend_from_slice(ext_bytes)
-        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    if !ext_bytes.is_empty() {
+        cnt += writer
+            .extend_from_slice(ext_bytes)
+            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    }
 
     //TD info init (per GHCI 1.5: TDINFO_STRUCT)
     // NOTE: VdmMessageElementType::TdReportInit name retained for wire compatibility;
     // payload is now TDINFO_STRUCT, not full TDREPORT.
-    // Empty when target TD has SERVTD_EXT opted out (opt-out signal).
+    // Empty when target TD has SERVTD_EXT opted out.
     let tdinfo_init: &[u8] = match init_td_info {
         Some(t) => t,
         None => &[],

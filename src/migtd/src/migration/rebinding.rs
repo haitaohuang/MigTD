@@ -219,46 +219,49 @@ async fn rebinding_old_prepare(
     data: &mut Vec<u8>,
     peer_data: Vec<u8>,
 ) -> Result<(), MigrationResult> {
-    let (servtd_ext, has_servtd_ext) = read_servtd_ext(info.binding_handle, &info.target_td_uuid)?;
+    let servtd_ext = read_servtd_ext(info.binding_handle, &info.target_td_uuid)?;
 
-    // Resolve the initial TDINFO_STRUCT: use VMM-provided bytes when present,
-    // otherwise fall back to the local MigTD's self-report.
+    // Reject VMM misconfiguration: init_tdinfo provided but target TD opted out.
+    if servtd_ext.is_none() && info.init_td_info_if_present().is_some() {
+        log::error!("Misconfiguration: VMM provided init_tdinfo but target TD has no SERVTD_EXT\n");
+        return Err(MigrationResult::InvalidParameter);
+    }
+
+    // Resolve init TDINFO and policy hash only when SERVTD_EXT is opted in.
     let local;
-    let init_td_info: &[u8; TD_INFO_SIZE] = match info.init_td_info_if_present() {
-        Some(t) => {
-            log::trace!(
-                migration_request_id = info.mig_request_id;
-                "rebinding_old_prepare: using VMM-provided init_td_info\n"
-            );
-            t
-        }
-        None => {
-            log::trace!(
-                migration_request_id = info.mig_request_id;
-                "rebinding_old_prepare: VMM omitted init_td_info, falling back to local tdcall_report\n"
-            );
-            local = crate::migration::local_init_td_info()?;
-            &local
-        }
-    };
-    crate::migration::trace_td_info(
-        "rebinding_old_prepare: client_rebinding",
-        info.mig_request_id,
-        init_td_info,
-    );
-
-    // Per GHCI 1.5: init policy key hash is in tdinfo.mrowner.
-    // Use mrowner directly as the init_policy_hash equivalent.
-    let init_policy_hash = crate::migration::td_info_mrowner(init_td_info).to_vec();
-
-    // When SERVTD_EXT is not supported by the target TD, send empty
-    // init_tdinfo. The 272-byte servtd_ext is always sent; emptiness of
-    // init_tdinfo is the opt-out signal.
-    let init_tdinfo: &[u8] = if has_servtd_ext {
-        init_td_info
+    let default_ext;
+    let (init_tdinfo, init_policy_hash, ext_ref): (&[u8], Vec<u8>, &ServtdExt) = if let Some(
+        ref ext,
+    ) = servtd_ext
+    {
+        let td_info: &[u8; TD_INFO_SIZE] = match info.init_td_info_if_present() {
+            Some(t) => {
+                log::trace!(
+                    migration_request_id = info.mig_request_id;
+                    "rebinding_old_prepare: using VMM-provided init_td_info\n"
+                );
+                t
+            }
+            None => {
+                log::trace!(
+                    migration_request_id = info.mig_request_id;
+                    "rebinding_old_prepare: VMM omitted init_td_info, falling back to local tdcall_report\n"
+                );
+                local = crate::migration::local_init_td_info()?;
+                &local
+            }
+        };
+        crate::migration::trace_td_info(
+            "rebinding_old_prepare: client_rebinding",
+            info.mig_request_id,
+            td_info,
+        );
+        let policy_hash = crate::migration::td_info_mrowner(td_info).to_vec();
+        (td_info.as_slice(), policy_hash, ext)
     } else {
-        log::info!("SERVTD_EXT not supported, skipping init_tdinfo in rebind cert\n");
-        &[]
+        log::info!("SERVTD_EXT not supported, sending empty init_tdinfo/servtd_ext\n");
+        default_ext = ServtdExt::default();
+        (&[], Vec::new(), &default_ext)
     };
 
     // TLS client
@@ -267,7 +270,7 @@ async fn rebinding_old_prepare(
         peer_data,
         &init_policy_hash,
         init_tdinfo,
-        &servtd_ext,
+        ext_ref,
     )
     .map_err(|_| {
         #[cfg(feature = "vmcall-raw")]
@@ -322,20 +325,15 @@ async fn rebinding_new_prepare(
     let rebind_token = tls_receive_rebind_token(&mut ratls_server).await?;
 
     // The TLS session is established; extract servtd_ext from the peer certificates.
-    // When the old MigTD's target TD had no SERVTD_EXT, the cert contains a zeroed
-    // ServtdExt — skip TDCS writes in that case.
-    let mut servtd_ext = get_servtd_ext_from_cert(&ratls_server.peer_certs())?;
-    let has_servtd_ext = !servtd_ext.init_servtd_info_hash.iter().all(|&b| b == 0)
-        || !servtd_ext.cur_servtd_info_hash.iter().all(|&b| b == 0);
+    // When the old MigTD's target TD had no SERVTD_EXT, the cert extension is empty.
+    let servtd_ext = get_servtd_ext_from_cert(&ratls_server.peer_certs())?;
 
     write_rebinding_session_token(&rebind_token.token)?;
-    if has_servtd_ext {
-        write_servtd_rebind_attr(&servtd_ext.cur_servtd_attr)?;
-        servtd_ext.cur_servtd_info_hash.fill(0);
-        servtd_ext.cur_servtd_attr.fill(0);
-        write_approved_servtd_ext_hash(Some(
-            servtd_ext.calculate_approved_servtd_ext_hash()?.as_slice(),
-        ))?;
+    if let Some(mut ext) = servtd_ext {
+        write_servtd_rebind_attr(&ext.cur_servtd_attr)?;
+        ext.cur_servtd_info_hash.fill(0);
+        ext.cur_servtd_attr.fill(0);
+        write_approved_servtd_ext_hash(Some(ext.calculate_approved_servtd_ext_hash()?.as_slice()))?;
     } else {
         log::info!("SERVTD_EXT not supported by peer, skipping TDCS writes\n");
         write_approved_servtd_ext_hash(None)?;
@@ -386,7 +384,9 @@ pub fn approve_rebinding(
 }
 
 #[cfg(not(feature = "spdm_attestation"))]
-fn get_servtd_ext_from_cert(certs: &Option<Vec<&[u8]>>) -> Result<ServtdExt, MigrationResult> {
+fn get_servtd_ext_from_cert(
+    certs: &Option<Vec<&[u8]>>,
+) -> Result<Option<ServtdExt>, MigrationResult> {
     if let Some(cert_chain) = certs {
         if cert_chain.is_empty() {
             return Err(MigrationResult::SecureSessionError);
@@ -401,10 +401,16 @@ fn get_servtd_ext_from_cert(certs: &Option<Vec<&[u8]>>) -> Result<ServtdExt, Mig
             .as_ref()
             .ok_or(MigrationResult::SecureSessionError)?;
 
-        let servtd_ext = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT)
+        let servtd_ext_bytes = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT)
             .ok_or(MigrationResult::SecureSessionError)?;
 
-        ServtdExt::read_from_bytes(servtd_ext).ok_or(MigrationResult::InvalidParameter)
+        // Empty extension data means SERVTD_EXT opted out.
+        if servtd_ext_bytes.is_empty() {
+            return Ok(None);
+        }
+        ServtdExt::read_from_bytes(servtd_ext_bytes)
+            .map(Some)
+            .ok_or(MigrationResult::InvalidParameter)
     } else {
         Err(MigrationResult::SecureSessionError)
     }
