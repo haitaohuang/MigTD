@@ -12,6 +12,7 @@ use crypto::{
 use ring::rand::{SecureRandom, SystemRandom};
 use tdx_tdcall::tdx::{tdcall_servtd_rebind_approve, tdcall_vm_write};
 
+use crate::migration::pre_session_data::LogErr;
 use crate::migration::servtd_ext::read_servtd_ext;
 use crate::migration::transport::*;
 #[cfg(feature = "spdm_attestation")]
@@ -102,21 +103,8 @@ pub async fn start_rebinding(
             pre_session_data_exchange(&mut transport),
         ))
         .await
-        .map_err(|e| {
-            log::error!(
-                "start_rebinding: pre_session_data_exchange timeout error: {:?}\n",
-                e
-            );
-            e
-        })?
-        .map_err(|e| {
-            log::error!(
-                "start_rebinding: pre_session_data_exchange error: {:?}\n",
-                e
-            );
-            e
-        })?;
-
+        .log_err("start_rebinding: pre_session_data_exchange timeout")?
+        .log_err("start_rebinding: pre_session_data_exchange")?;
         #[cfg(not(feature = "spdm_attestation"))]
         rebinding_old_prepare(transport, info, data, peer_data).await?;
 
@@ -135,20 +123,8 @@ pub async fn start_rebinding(
             pre_session_data_exchange(&mut transport),
         ))
         .await
-        .map_err(|e| {
-            log::error!(
-                "start_rebinding: pre_session_data_exchange timeout error: {:?}\n",
-                e
-            );
-            e
-        })?
-        .map_err(|e| {
-            log::error!(
-                "start_rebinding: pre_session_data_exchange error: {:?}\n",
-                e
-            );
-            e
-        })?;
+        .log_err("start_rebinding: pre_session_data_exchange timeout")?
+        .log_err("start_rebinding: pre_session_data_exchange")?;
 
         #[cfg(not(feature = "spdm_attestation"))]
         rebinding_new_prepare(transport, info, data, peer_data).await?;
@@ -221,12 +197,9 @@ pub async fn rebinding_old_prepare(
             )
             .into_bytes(),
         );
-        log::error!(
-            "rebinding: spdm_requester_rebind_old timeout error: {:?}\n",
-            e
-        );
         e
-    })?
+    })
+    .log_err("rebinding: spdm_requester_rebind_old timeout")?
     .map_err(|e| {
         #[cfg(feature = "vmcall-raw")]
         data.extend_from_slice(
@@ -236,9 +209,9 @@ pub async fn rebinding_old_prepare(
             )
             .into_bytes(),
         );
-        log::error!("rebinding: spdm_requester_rebind_old error: {:?}\n", e);
         e
-    })?;
+    })
+    .log_err("rebinding: spdm_requester_rebind_old")?;
     log::info!("Rebind completed\n");
 
     let mut transport_lock = device_io_ref.lock();
@@ -292,12 +265,9 @@ pub async fn rebinding_new_prepare(
             )
             .into_bytes(),
         );
-        log::error!(
-            "rebinding: spdm_responder_rebind_new timeout error: {:?}\n",
-            e
-        );
         e
-    })?
+    })
+    .log_err("rebinding: spdm_responder_rebind_new timeout")?
     .map_err(|e| {
         #[cfg(feature = "vmcall-raw")]
         data.extend_from_slice(
@@ -307,9 +277,9 @@ pub async fn rebinding_new_prepare(
             )
             .into_bytes(),
         );
-        log::error!("rebinding: spdm_responder_rebind_new error: {:?}\n", e);
         e
-    })?;
+    })
+    .log_err("rebinding: spdm_responder_rebind_new")?;
     log::info!("Rebind completed\n");
 
     let mut transport_lock = device_io_ref.lock();
@@ -491,20 +461,8 @@ async fn tls_send_rebind_token(
         tls_session_write_all(tls_session, rebind_token.as_bytes()),
     )
     .await
-    .map_err(|e| {
-        log::error!(
-            "tls_send_rebind_token: tls_session_write_all timeout error: {:?}\n",
-            e
-        );
-        e
-    })?
-    .map_err(|e| {
-        log::error!(
-            "tls_send_rebind_token: tls_session_write_all error: {:?}\n",
-            e
-        );
-        e
-    })?;
+    .log_err("tls_send_rebind_token: tls_session_write_all timeout")?
+    .log_err("tls_send_rebind_token: tls_session_write_all")?;
     Ok(())
 }
 
@@ -515,20 +473,8 @@ async fn tls_receive_rebind_token(
     // MigTD old send rebinding session token to peer
     with_timeout(TLS_TIMEOUT, tls_session_read_exact(tls_session, &mut data))
         .await
-        .map_err(|e| {
-            log::error!(
-                "tls_receive_rebind_token: tls_session_read_exact timeout error: {:?}\n",
-                e
-            );
-            e
-        })?
-        .map_err(|e| {
-            log::error!(
-                "tls_receive_rebind_token: tls_session_read_exact error: {:?}\n",
-                e
-            );
-            e
-        })?;
+        .log_err("tls_receive_rebind_token: tls_session_read_exact timeout")?
+        .log_err("tls_receive_rebind_token: tls_session_read_exact")?;
 
     let rebind_token =
         RebindingToken::read_from_bytes(&data).ok_or(MigrationResult::InvalidParameter)?;

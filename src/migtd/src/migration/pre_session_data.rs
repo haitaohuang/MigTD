@@ -158,19 +158,10 @@ pub(super) async fn send_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unp
 
     send_pre_session_data(transport, header.as_bytes())
         .await
-        .map_err(|e| {
-            log::error!("send_pre_session_data header: Network error: {:?}\n", e);
-            e
-        })?;
+        .log_err("send_pre_session_data header: Network")?;
     send_pre_session_data(transport, pre_session_data)
         .await
-        .map_err(|e| {
-            log::error!(
-                "send_pre_session_data pre_session_data: Network error: {:?}\n",
-                e
-            );
-            e
-        })
+        .log_err("send_pre_session_data pre_session_data: Network")
 }
 
 pub(super) async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unpin>(
@@ -179,10 +170,7 @@ pub(super) async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + 
     let mut header_buffer = [0u8; size_of::<PreSessionMessage>()];
     receive_pre_session_data(transport, &mut header_buffer)
         .await
-        .map_err(|e| {
-            log::error!("receive_pre_session_data header: Network error: {:?}\n", e);
-            e
-        })?;
+        .log_err("receive_pre_session_data header: Network")?;
 
     let header = PreSessionMessage::read_from_bytes(&header_buffer).ok_or_else(|| {
         log::error!("receive_pre_session_data_packet: Failed to read PreSessionMessage header\n");
@@ -197,10 +185,7 @@ pub(super) async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + 
     let mut pre_session_data_payload = vec![0u8; pre_session_data_payload_size];
     receive_pre_session_data(transport, &mut pre_session_data_payload)
         .await
-        .map_err(|e| {
-            log::error!("receive_pre_session_data payload: Network error: {:?}\n", e);
-            e
-        })?;
+        .log_err("receive_pre_session_data payload: Network")?;
 
     Ok(pre_session_data_payload)
 }
@@ -216,10 +201,7 @@ pub(super) async fn send_start_session_packet<T: AsyncRead + AsyncWrite + Unpin>
 
     send_pre_session_data(transport, header.as_bytes())
         .await
-        .map_err(|e| {
-            log::error!("send_start_session_packet: Network error: {:?}\n", e);
-            e
-        })
+        .log_err("send_start_session_packet: Network")
 }
 
 pub(super) async fn receive_start_session_packet<T: AsyncRead + AsyncWrite + Unpin>(
@@ -228,10 +210,7 @@ pub(super) async fn receive_start_session_packet<T: AsyncRead + AsyncWrite + Unp
     let mut header_buffer = [0u8; size_of::<PreSessionMessage>()];
     receive_pre_session_data(transport, &mut header_buffer)
         .await
-        .map_err(|e| {
-            log::error!("receive_start_session_packet: Network error: {:?}\n", e);
-            e
-        })?;
+        .log_err("receive_start_session_packet: Network")?;
 
     let packet = PreSessionMessage::read_from_bytes(&header_buffer).ok_or_else(|| {
         log::error!("receive_start_session_packet: Failed to read PreSessionMessage header\n");
@@ -259,18 +238,12 @@ async fn send_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(transport: &mut T)
     };
     send_pre_session_data(transport, header.as_bytes())
         .await
-        .map_err(|e| {
-            log::error!("send_hello_packet: Network error: {:?}\n", e);
-            e
-        })?;
+        .log_err("send_hello_packet: Network")?;
 
     let payload = HelloPacketPayload::new();
     send_pre_session_data(transport, payload.as_bytes())
         .await
-        .map_err(|e| {
-            log::error!("send_hello_packet: Network error: {:?}\n", e);
-            e
-        })
+        .log_err("send_hello_packet: Network")
 }
 
 async fn receive_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
@@ -279,10 +252,7 @@ async fn receive_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
     let mut header_buffer = [0u8; size_of::<PreSessionMessage>()];
     receive_pre_session_data(transport, &mut header_buffer)
         .await
-        .map_err(|e| {
-            log::error!("receive_hello_packet: Network error: {:?}\n", e);
-            e
-        })?;
+        .log_err("receive_hello_packet: Network")?;
 
     let header = PreSessionMessage::read_from_bytes(&header_buffer).ok_or_else(|| {
         log::error!("receive_hello_packet: Failed to read PreSessionMessage header\n");
@@ -303,10 +273,7 @@ async fn receive_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
     let mut hello_payload = vec![0u8; HelloPacketPayload::HELLO_PACKET_PAYLOAD_SIZE];
     receive_pre_session_data(transport, &mut hello_payload)
         .await
-        .map_err(|e| {
-            log::error!("receive_hello_packet payload: Network error: {:?}\n", e);
-            e
-        })?;
+        .log_err("receive_hello_packet payload: Network")?;
 
     HelloPacketPayload::read_from_bytes(&hello_payload)
         .ok_or(MigrationResult::InvalidParameter)
@@ -320,17 +287,12 @@ async fn receive_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
 pub(super) async fn exchange_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
 ) -> Result<u16> {
-    send_hello_packet(transport).await.map_err(|e| {
-        log::error!("exchange_hello_packet: send_hello_packet error: {:?}\n", e);
-        e
-    })?;
-    let remote = receive_hello_packet(transport).await.map_err(|e| {
-        log::error!(
-            "exchange_hello_packet: receive_hello_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
+    send_hello_packet(transport)
+        .await
+        .log_err("exchange_hello_packet: send_hello_packet")?;
+    let remote = receive_hello_packet(transport)
+        .await
+        .log_err("exchange_hello_packet: receive_hello_packet")?;
 
     remote
         .negotiate_supported_version()

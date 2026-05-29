@@ -4,6 +4,7 @@
 
 #[cfg(feature = "policy_v2")]
 use crate::migration::pre_session_data::pre_session_data_exchange;
+use crate::migration::pre_session_data::LogErr;
 #[cfg(not(feature = "spdm_attestation"))]
 use crate::migration::servtd_ext::verify_servtd_attr;
 use crate::migration::transport::setup_transport;
@@ -134,15 +135,10 @@ pub fn query() -> Result<()> {
         command: QUERY_COMMAND,
         reserved: [0; 2],
     };
-    cmd.write(query.as_bytes()).map_err(|e| {
-        log::error!("query: Failed to write query to command buffer\n");
-        e
-    })?;
+    cmd.write(query.as_bytes())
+        .log_err("query: Failed to write query to command buffer")?;
     cmd.write(VMCALL_SERVICE_MIGTD_GUID.as_bytes())
-        .map_err(|e| {
-            log::error!("query: Failed to write MIGTD GUID to command buffer\n");
-            e
-        })?;
+        .log_err("query: Failed to write MIGTD GUID to command buffer")?;
     let _ = VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_COMMON_GUID)
         .ok_or_else(|| {
             log::error!("query: Failed to create VmcallServiceResponse\n");
@@ -160,10 +156,8 @@ pub fn query() -> Result<()> {
         event::wait_for_event(&event::VMCALL_SERVICE_FLAG);
     }
     #[cfg(not(feature = "vmcall-interrupt"))]
-    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0).map_err(|e| {
-        log::error!("query: tdvmcall_service failure {:?}\n", e);
-        e
-    })?;
+    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)
+        .log_err("query: tdvmcall_service")?;
 
     let private_mem = rsp_mem.copy_to_private_shadow().ok_or_else(|| {
         log::error!("query: Failed to copy response to private shadow\n");
@@ -623,14 +617,10 @@ pub fn shutdown() -> Result<()> {
         command: MIG_COMMAND_SHUT_DOWN,
         reserved: [0; 2],
     };
-    cmd.write(sd.as_bytes()).map_err(|e| {
-        log::error!("shutdown: Failed to write shutdown command to command buffer\n");
-        e
-    })?;
-    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0).map_err(|e| {
-        log::error!("shutdown: tdvmcall_service failed: {:?}\n", e);
-        e
-    })?;
+    cmd.write(sd.as_bytes())
+        .log_err("shutdown: Failed to write shutdown command to command buffer")?;
+    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)
+        .log_err("shutdown: tdvmcall_service")?;
     Ok(())
 }
 
@@ -954,17 +944,9 @@ async fn migration_src_exchange_msk(
         ),
     )
     .await
-    .map_err(|e| {
-        log::error!(
-            "exchange_msk: spdm_requester_transfer_msk timeout error: {:?}\n",
-            e
-        );
-        e
-    })?
-    .map_err(|e| {
-        log::error!("exchange_msk: spdm_requester_transfer_msk error: {:?}\n", e);
-        spdm::decode_spdm_session_err(e)
-    })?;
+    .log_err("exchange_msk: spdm_requester_transfer_msk timeout")?
+    .log_err("exchange_msk: spdm_requester_transfer_msk")
+    .map_err(spdm::decode_spdm_session_err)?;
     log::info!("MSK exchange completed\n");
 
     let mut transport_lock = device_io_ref.lock();
@@ -1000,17 +982,9 @@ async fn migration_dst_exchange_msk(
         ),
     )
     .await
-    .map_err(|e| {
-        log::error!(
-            "exchange_msk: spdm_responder_transfer_msk timeout error: {:?}\n",
-            e
-        );
-        e
-    })?
-    .map_err(|e| {
-        log::error!("exchange_msk: spdm_responder_transfer_msk error: {:?}\n", e);
-        spdm::decode_spdm_session_err(e)
-    })?;
+    .log_err("exchange_msk: spdm_responder_transfer_msk timeout")?
+    .log_err("exchange_msk: spdm_responder_transfer_msk")
+    .map_err(spdm::decode_spdm_session_err)?;
     log::info!("MSK exchange completed\n");
 
     let mut transport_lock = device_io_ref.lock();
