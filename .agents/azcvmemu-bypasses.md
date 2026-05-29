@@ -38,7 +38,7 @@ require) a given bypass.
 |---|-------|:---:|:---:|------|--------|
 | 1 | mrowner match vs init TDINFO | **Bypassed** | Enforced | `ratls/server_client.rs:1001` | EMU returns zeroed mrowner; real HW has correct value |
 | 2 | Public key hash in REPORTDATA | **Bypassed** | **Bypassed** | `ratls/server_client.rs:1156` | EMU: REPORTDATA not bound. Mock-quote: TLS path uses quote-derived supplemental data which is mocked |
-| 3 | Public key hash (policy_v2 variant) | **Bypassed** | **Bypassed** | `ratls/server_client.rs:1193` | Same as #2 |
+| 3 | Public key hash (policy_v2 variant) | **Bypassed** | Enforced | `ratls/server_client.rs:1193` | EMU: REPORTDATA not bound. `use-mock-quote`: real `tdcall_report` binds REPORTDATA correctly; policy_v2 path uses TDREPORT directly (not quote supplemental data), so no mock-quote issue |
 
 ### SPDM Path
 
