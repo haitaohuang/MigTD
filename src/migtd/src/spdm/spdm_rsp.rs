@@ -30,8 +30,8 @@ use crypto::{ecdsa::EcdsaPk, hash::digest_sha384};
 use log::error;
 
 use crate::spdm::{
-    build_report_data, gen_quote_spdm, spdm_verify_quote, verify_report_data_binding,
-    verify_tdreport_data_binding, vmcall_msg::VmCallTransportEncap, *,
+    build_report_data, fail_with_teardown, gen_quote_spdm, spdm_verify_quote,
+    verify_report_data_binding, verify_tdreport_data_binding, vmcall_msg::VmCallTransportEncap, *,
 };
 use spdmlib::{
     common::{self, *},
@@ -380,6 +380,7 @@ pub fn handle_exchange_mig_attest_info_req(
         .is_some()
     {
         error!("Attestation info has already been exchanged.\n");
+        session.teardown();
         return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
     }
 
@@ -391,7 +392,11 @@ pub fn handle_exchange_mig_attest_info_req(
             .is_none()
     {
         error!("Cannot transfer attestation info without provisioning pub_key.\n");
-        return Err(SPDM_STATUS_UNSUPPORTED_CAP);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_UNSUPPORTED_CAP,
+        ));
     }
 
     if vdm_request.major_version != VDM_MESSAGE_MAJOR_VERSION {
@@ -399,25 +404,41 @@ pub fn handle_exchange_mig_attest_info_req(
             "Invalid VDM message major_version: {:x?}\n",
             vdm_request.major_version
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.minor_version != VDM_MESSAGE_MINOR_VERSION {
         error!(
             "Invalid VDM message minor_version: {:x?}\n",
             vdm_request.minor_version
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.op_code != VdmMessageOpCode::ExchangeMigrationAttestInfoReq {
         error!("Invalid VDM message op_code: {:x?}\n", vdm_request.op_code);
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.element_count != VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_REQ_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_request.element_count
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
 
     let th1 = if let Some(s) = responder_context.common.get_session_via_id(session_id) {
@@ -427,7 +448,8 @@ pub fn handle_exchange_mig_attest_info_req(
         return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
     };
 
-    let report_data = build_report_data(b"MigTDRsp", &th1)?;
+    let report_data = build_report_data(b"MigTDRsp", &th1)
+        .map_err(|e| fail_with_teardown(&mut responder_context.common, session_id, e))?;
 
     //quote dst
     let quote_dst = gen_quote_spdm(&report_data)?;
@@ -450,46 +472,90 @@ pub fn handle_exchange_mig_attest_info_req(
     };
 
     //quote src
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let vdm_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if vdm_element.element_type != VdmMessageElementType::QuoteMy {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
-    let quote_src = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let quote_src = reader.take(vdm_element.length as usize).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     let quote_src_vec = quote_src.to_vec();
 
     //event log src
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let vdm_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if vdm_element.element_type != VdmMessageElementType::EventLogMy {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
-    let event_log_src = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let event_log_src = reader.take(vdm_element.length as usize).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     let event_log_src_vec = event_log_src.to_vec();
 
     //mig policy src
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let vdm_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if vdm_element.element_type != VdmMessageElementType::MigPolicyMy {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     #[cfg(feature = "policy_v2")]
     let mig_policy_hash_src = reader
         .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?
+        .ok_or_else(|| {
+            fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_INVALID_MSG_SIZE,
+            )
+        })?
         .to_vec();
     #[cfg(not(feature = "policy_v2"))]
     let _mig_policy_hash_src = reader
@@ -497,17 +563,31 @@ pub fn handle_exchange_mig_attest_info_req(
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
     // SERVTD_EXT from src
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let vdm_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
-    let servtd_ext_bytes = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let servtd_ext_bytes = reader.take(vdm_element.length as usize).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
 
     // Store SERVTD_EXT in ResponderContextEx for later use during MSK exchange
     #[cfg(feature = "policy_v2")]
@@ -517,17 +597,31 @@ pub fn handle_exchange_mig_attest_info_req(
     };
 
     // Init TDINFO from src (used for SERVTD_HASH verification)
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let vdm_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if vdm_element.element_type != VdmMessageElementType::TdReportInit {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
-    let _td_report_init = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let _td_report_init = reader.take(vdm_element.length as usize).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
 
     // Policy-specific verification
     #[cfg(not(feature = "policy_v2"))]
@@ -567,21 +661,35 @@ pub fn handle_exchange_mig_attest_info_req(
         element_count: VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_RSP_ELEMENT_COUNT,
     };
 
-    cnt += vdm_exchange_attest_info
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    cnt += vdm_exchange_attest_info.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
 
     //quote dst
     let quote_element = VdmMessageElement {
         element_type: VdmMessageElementType::QuoteMy,
         length: quote_dst.len() as u32,
     };
-    cnt += quote_element
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    cnt += quote_element.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
     cnt += writer
         .extend_from_slice(quote_dst.as_slice())
-        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+        .ok_or_else(|| {
+            fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_BUFFER_FULL,
+            )
+        })?;
 
     //event log dst
     let event_log_dst = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
@@ -589,27 +697,50 @@ pub fn handle_exchange_mig_attest_info_req(
         element_type: VdmMessageElementType::EventLogMy,
         length: event_log_dst.len() as u32,
     };
-    cnt += event_log_element
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer
-        .extend_from_slice(event_log_dst)
-        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    cnt += event_log_element.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
+    cnt += writer.extend_from_slice(event_log_dst).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
 
     //mig policy dst
     let mig_policy_dst = get_policy().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-    let mig_policy_dst_hash =
-        digest_sha384(mig_policy_dst).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+    let mig_policy_dst_hash = digest_sha384(mig_policy_dst).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_CRYPTO_ERROR,
+        )
+    })?;
     let mig_policy_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyMy,
         length: mig_policy_dst_hash.len() as u32,
     };
-    cnt += mig_policy_element
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    cnt += mig_policy_element.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
     cnt += writer
         .extend_from_slice(&mig_policy_dst_hash)
-        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+        .ok_or_else(|| {
+            fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_BUFFER_FULL,
+            )
+        })?;
 
     Ok(cnt)
 }
@@ -684,15 +815,20 @@ fn rsp_verify_peer_attestation_v2(
     session_id: u32,
 ) -> SpdmResult {
     // 1. Verify remote policy hash
-    let remote_policy_hash = digest_sha384(remote_policy).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+    let remote_policy_hash = digest_sha384(remote_policy).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_CRYPTO_ERROR,
+        )
+    })?;
     if mig_policy_hash_peer != remote_policy_hash.as_slice() {
         error!("The received mig policy hash does not match the expected remote policy hash!\n");
-        let session = responder_context
-            .common
-            .get_session_via_id(session_id)
-            .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-        session.teardown();
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
 
     // 2. Authenticate remote (includes quote verification internally)
@@ -703,12 +839,11 @@ fn rsp_verify_peer_attestation_v2(
         if let Err(e) = &policy_check_result {
             error!("Policy v2 check failed, below is the detail information:\n");
             error!("{:x?}\n", e);
-            let session = responder_context
-                .common
-                .get_session_via_id(session_id)
-                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-            session.teardown();
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            return Err(fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_INVALID_MSG_FIELD,
+            ));
         }
 
         // 3. Verify REPORTDATA binding using supplemental data from authenticate_remote
@@ -721,12 +856,11 @@ fn rsp_verify_peer_attestation_v2(
             let verified_report_peer = policy_check_result.unwrap();
             if verify_report_data_binding(&verified_report_peer, b"MigTDReq", th1).is_err() {
                 error!("Peer REPORTDATA does not match expected TH1 binding!\n");
-                let session = responder_context
-                    .common
-                    .get_session_via_id(session_id)
-                    .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-                session.teardown();
-                return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+                return Err(fail_with_teardown(
+                    &mut responder_context.common,
+                    session_id,
+                    SPDM_STATUS_INVALID_MSG_FIELD,
+                ));
             }
         }
     }
@@ -769,59 +903,116 @@ pub fn handle_exchange_mig_info_req(
             "Invalid VDM message major_version: {:x?}\n",
             vdm_request.major_version
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.minor_version != VDM_MESSAGE_MINOR_VERSION {
         error!(
             "Invalid VDM message minor_version: {:x?}\n",
             vdm_request.minor_version
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.op_code != VdmMessageOpCode::ExchangeMigrationInfoReq {
         error!("Invalid VDM message op_code: {:x?}\n", vdm_request.op_code);
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.element_count != VDM_MESSAGE_EXCHANGE_MIGRATION_INFO_REQ_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_request.element_count
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
 
-    let mig_export_version_element =
-        VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let mig_export_version_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if mig_export_version_element.element_type != VdmMessageElementType::MigrationExportVersion
         || mig_export_version_element.length != VDM_MESSAGE_MIGRATION_EXPORT_VERSION_SIZE
     {
         error!("invalid migration info payload!\n");
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
-    let min_export_version = u16::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    let max_export_version = u16::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let min_export_version = u16::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
+    let max_export_version = u16::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
 
-    let forward_mig_session_key_element =
-        VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let forward_mig_session_key_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if forward_mig_session_key_element.element_type
         != VdmMessageElementType::ForwardMigrationSessionKey
         || forward_mig_session_key_element.length != VDM_MESSAGE_FORWARD_MIGRATION_SESSION_KEY_SIZE
     {
         error!("invalid forward migration session key!\n");
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
 
     let remote_information = ExchangeInformation {
         min_ver: min_export_version,
         max_ver: max_export_version,
         key: MigrationSessionKey {
-            fields: <[u64; 4]>::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?,
+            fields: <[u64; 4]>::read(reader).ok_or_else(|| {
+                fail_with_teardown(
+                    &mut responder_context.common,
+                    session_id,
+                    SPDM_STATUS_INVALID_MSG_SIZE,
+                )
+            })?,
         },
     };
 
     let mut reader = Reader::init(responder_context.common.app_context_data_buffer.as_ref());
-    let responder_app_context =
-        SpdmAppContextData::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let responder_app_context = SpdmAppContextData::read(&mut reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     let exchange_information = exchange_info(&responder_app_context.migration_info, false)?;
 
     verify_servtd_attr(
@@ -862,9 +1053,13 @@ pub fn handle_exchange_mig_info_req(
         op_code: VdmMessageOpCode::ExchangeMigrationInfoRsp,
         element_count: VDM_MESSAGE_EXCHANGE_MIGRATION_INFO_RSP_ELEMENT_COUNT,
     };
-    cnt += vdm_exchange_mig_info
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    cnt += vdm_exchange_mig_info.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
 
     //Migration Import Version
     let mig_import_version_element = VdmMessageElement {
@@ -873,13 +1068,27 @@ pub fn handle_exchange_mig_info_req(
     };
     cnt += mig_import_version_element
         .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += min_import_version
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += max_import_version
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        .map_err(|_| {
+            fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_BUFFER_FULL,
+            )
+        })?;
+    cnt += min_import_version.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
+    cnt += max_import_version.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
 
     //Backward Migration Session Key
     let backward_mig_session_key_element = VdmMessageElement {
@@ -888,10 +1097,20 @@ pub fn handle_exchange_mig_info_req(
     };
     cnt += backward_mig_session_key_element
         .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer
-        .extend_from_slice(&mig_session_key)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+        .map_err(|_| {
+            fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_BUFFER_FULL,
+            )
+        })?;
+    cnt += writer.extend_from_slice(&mig_session_key).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
 
     Ok(cnt)
 }
@@ -936,6 +1155,7 @@ pub fn handle_exchange_rebind_attest_info_req(
         .is_some()
     {
         error!("Attestation info has already been exchanged.\n");
+        session.teardown();
         return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
     }
 
@@ -947,7 +1167,11 @@ pub fn handle_exchange_rebind_attest_info_req(
             .is_none()
     {
         error!("Cannot transfer attestation info without provisioning pub_key.\n");
-        return Err(SPDM_STATUS_UNSUPPORTED_CAP);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_UNSUPPORTED_CAP,
+        ));
     }
 
     if vdm_request.major_version != VDM_MESSAGE_MAJOR_VERSION {
@@ -955,18 +1179,30 @@ pub fn handle_exchange_rebind_attest_info_req(
             "Invalid VDM message major_version: {:x?}\n",
             vdm_request.major_version
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.minor_version != VDM_MESSAGE_MINOR_VERSION {
         error!(
             "Invalid VDM message minor_version: {:x?}\n",
             vdm_request.minor_version
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.op_code != VdmMessageOpCode::ExchangeRebindAttestInfoReq {
         error!("Invalid VDM message op_code: {:x?}\n", vdm_request.op_code);
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.element_count
         != VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_REQ_WITH_HISTORY_INFO_ELEMENT_COUNT
@@ -975,7 +1211,11 @@ pub fn handle_exchange_rebind_attest_info_req(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_request.element_count
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
 
     let th1 = if let Some(s) = responder_context.common.get_session_via_id(session_id) {
@@ -992,7 +1232,11 @@ pub fn handle_exchange_rebind_attest_info_req(
     // th1 for SHA-384 should be 48 bytes; 8 (prefix) + 48 digest = 56 bytes needed.
     if th1_len > SPDM_MAX_HASH_SIZE {
         error!("th1 length is too large: {}\n", th1_len);
-        return Err(SPDM_STATUS_BUFFER_FULL);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        ));
     }
     let mut report_data = [0u8; "MigTDRsp".len() + SPDM_MAX_HASH_SIZE];
     // Copy prefix
@@ -1001,95 +1245,180 @@ pub fn handle_exchange_rebind_attest_info_req(
         .copy_from_slice(&th1.data[..th1_len]);
 
     //TD report src
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let vdm_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if vdm_element.element_type != VdmMessageElementType::TdReportMy {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
-    let td_report_src = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let td_report_src = reader.take(vdm_element.length as usize).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     let td_report_src_vec = td_report_src.to_vec();
 
     //event log src
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let vdm_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if vdm_element.element_type != VdmMessageElementType::EventLogMy {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
-    let event_log_src = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let event_log_src = reader.take(vdm_element.length as usize).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     let event_log_src_vec = event_log_src.to_vec();
 
     //mig policy src
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let vdm_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if vdm_element.element_type != VdmMessageElementType::MigPolicyMy {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
-    let mig_policy_hash_src = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let mig_policy_hash_src = reader.take(vdm_element.length as usize).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     let mig_policy_hash_src_vec = mig_policy_hash_src.to_vec();
 
     // SERVTD_EXT
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let vdm_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     };
-    let servtd_ext = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let servtd_ext = reader.take(vdm_element.length as usize).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     let servtd_ext_vec = servtd_ext.to_vec();
 
     // TD report init
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let vdm_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if vdm_element.element_type != VdmMessageElementType::TdReportInit {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     };
-    let td_report_init = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let td_report_init = reader.take(vdm_element.length as usize).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     let td_report_init_vec = td_report_init.to_vec();
 
     // mig policy init hash
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let vdm_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if vdm_element.element_type != VdmMessageElementType::MigPolicyInit {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     };
-    let mig_policy_init_hash_src = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let mig_policy_init_hash_src = reader.take(vdm_element.length as usize).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
 
     // attestation verification
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
         let pre_session_data = unsafe {
             let spdm_responder_ex = upcast_mut(responder_context);
-            spdm_responder_ex.remote_policy.as_slice()
+            spdm_responder_ex.remote_policy.clone()
         };
+        let pre_session_data = pre_session_data.as_slice();
 
         //FIXME: Enable easier access to pre-session data, aligned to tls fixme.
         let remote_policy_size = u32::from_le_bytes(
@@ -1115,32 +1444,39 @@ pub fn handle_exchange_rebind_attest_info_req(
             .get(init_tdinfo_offset + 4..init_tdinfo_offset + 4 + init_tdinfo_size)
             .ok_or(MigrationResult::InvalidPolicyError)?;
 
-        let remote_policy_hash =
-            digest_sha384(remote_policy).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+        let remote_policy_hash = digest_sha384(remote_policy).map_err(|_| {
+            fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_CRYPTO_ERROR,
+            )
+        })?;
         if mig_policy_hash_src_vec != remote_policy_hash {
             error!(
                 "The received mig policy hash does not match the expected remote policy hash!\n"
             );
-            let session = responder_context
-                .common
-                .get_session_via_id(session_id)
-                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-            session.teardown();
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            return Err(fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_INVALID_MSG_FIELD,
+            ));
         }
 
         // Per GHCI 1.5: init_policy_hash is mrowner from TDINFO — compare directly
-        let mrowner = td_report_init_vec
-            .get(112..160)
-            .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+        let mrowner = td_report_init_vec.get(112..160).ok_or_else(|| {
+            fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_INVALID_MSG_SIZE,
+            )
+        })?;
         if mig_policy_init_hash_src != mrowner {
             error!("The received mig policy init hash does not match mrowner from init tdinfo!\n");
-            let session = responder_context
-                .common
-                .get_session_via_id(session_id)
-                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-            session.teardown();
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            return Err(fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_INVALID_MSG_FIELD,
+            ));
         }
 
         let policy_check_result = mig_policy::authenticate_rebinding_old(
@@ -1153,24 +1489,22 @@ pub fn handle_exchange_rebind_attest_info_req(
         if let Err(e) = &policy_check_result {
             error!("Policy v2 check failed, below is the detail information:\n");
             error!("{:x?}\n", e);
-            let session = responder_context
-                .common
-                .get_session_via_id(session_id)
-                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-            session.teardown();
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            return Err(fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_INVALID_MSG_FIELD,
+            ));
         }
 
         // Verify that the peer's REPORTDATA is bound to this SPDM session's TH1
         let verified_report_peer = policy_check_result.unwrap();
         if verify_tdreport_data_binding(&verified_report_peer, b"MigTDReq", &th1).is_err() {
             error!("Rebind peer REPORTDATA does not match expected TH1 binding!\n");
-            let session = responder_context
-                .common
-                .get_session_via_id(session_id)
-                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-            session.teardown();
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            return Err(fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_INVALID_MSG_FIELD,
+            ));
         }
     }
 
@@ -1189,53 +1523,108 @@ pub fn handle_exchange_rebind_attest_info_req(
         element_count: VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_RSP_ELEMENT_COUNT,
     };
 
-    cnt += vdm_exchange_attest_info
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    cnt += vdm_exchange_attest_info.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
 
     //TD report dst
-    let td_report_dst = gen_tdreport(&report_data[..report_data_prefix_len + th1_len])
-        .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let td_report_dst =
+        gen_tdreport(&report_data[..report_data_prefix_len + th1_len]).map_err(|_| {
+            fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_INVALID_STATE_LOCAL,
+            )
+        })?;
     let td_report_dst_bytes = td_report_dst.as_bytes();
 
     let tdreport_element = VdmMessageElement {
         element_type: VdmMessageElementType::TdReportMy,
         length: td_report_dst_bytes.len() as u32,
     };
-    cnt += tdreport_element
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    cnt += tdreport_element.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
     cnt += writer
         .extend_from_slice(td_report_dst_bytes)
-        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+        .ok_or_else(|| {
+            fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_BUFFER_FULL,
+            )
+        })?;
 
     //event log dst
-    let event_log_dst = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let event_log_dst = get_event_log().ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_STATE_LOCAL,
+        )
+    })?;
     let event_log_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogMy,
         length: event_log_dst.len() as u32,
     };
-    cnt += event_log_element
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer
-        .extend_from_slice(event_log_dst)
-        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    cnt += event_log_element.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
+    cnt += writer.extend_from_slice(event_log_dst).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
 
     //mig policy dst
-    let mig_policy_dst = get_policy().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-    let mig_policy_dst_hash =
-        digest_sha384(mig_policy_dst).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+    let mig_policy_dst = get_policy().ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_STATE_LOCAL,
+        )
+    })?;
+    let mig_policy_dst_hash = digest_sha384(mig_policy_dst).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_CRYPTO_ERROR,
+        )
+    })?;
     let mig_policy_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyMy,
         length: mig_policy_dst_hash.len() as u32,
     };
-    cnt += mig_policy_element
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    cnt += mig_policy_element.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
     cnt += writer
         .extend_from_slice(&mig_policy_dst_hash)
-        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+        .ok_or_else(|| {
+            fail_with_teardown(
+                &mut responder_context.common,
+                session_id,
+                SPDM_STATUS_BUFFER_FULL,
+            )
+        })?;
 
     Ok(cnt)
 }
@@ -1286,37 +1675,68 @@ pub fn handle_exchange_rebind_info_req(
             "Invalid VDM message major_version: {:x?}\n",
             vdm_request.major_version
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.minor_version != VDM_MESSAGE_MINOR_VERSION {
         error!(
             "Invalid VDM message minor_version: {:x?}\n",
             vdm_request.minor_version
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.op_code != VdmMessageOpCode::ExchangeRebindInfoReq {
         error!("Invalid VDM message op_code: {:x?}\n", vdm_request.op_code);
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
     if vdm_request.element_count != VDM_MESSAGE_EXCHANGE_REBIND_INFO_ELEMENT_REQ_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_request.element_count
         );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
 
-    let rebind_session_token_element =
-        VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let rebind_session_token_element = VdmMessageElement::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
     if rebind_session_token_element.element_type != VdmMessageElementType::RebindSessionToken
         || rebind_session_token_element.length != VDM_MESSAGE_REBIND_SESSION_TOKEN_SIZE
     {
         error!("invalid rebind session token!\n");
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        return Err(fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_FIELD,
+        ));
     }
 
-    let mut token = <[u8; 32]>::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let mut token = <[u8; 32]>::read(reader).ok_or_else(|| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_INVALID_MSG_SIZE,
+        )
+    })?;
 
     let servtd_ext = unsafe {
         let spdm_responder_ex = upcast_mut(responder_context);
@@ -1338,9 +1758,13 @@ pub fn handle_exchange_rebind_info_req(
         op_code: VdmMessageOpCode::ExchangeRebindInfoRsp,
         element_count: VDM_MESSAGE_EXCHANGE_REBIND_INFO_ELEMENT_RSP_COUNT,
     };
-    cnt += vdm_exchange_mig_info
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    cnt += vdm_exchange_mig_info.encode(&mut writer).map_err(|_| {
+        fail_with_teardown(
+            &mut responder_context.common,
+            session_id,
+            SPDM_STATUS_BUFFER_FULL,
+        )
+    })?;
 
     Ok(cnt)
 }
