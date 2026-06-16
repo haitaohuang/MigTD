@@ -45,6 +45,15 @@ impl LibraryCrates {
                 cmd!(sh, "cargo test")
                     .args(["-p", name.as_str(), "--features", "policy_v2"])
                     .run()?;
+                cmd!(sh, "cargo build")
+                    .args([
+                        "-p",
+                        name.as_str(),
+                        "--no-default-features",
+                        "--features",
+                        "AzCVMEmu,test_disable_ra_and_accept_all,spdm_attestation",
+                    ])
+                    .run()?;
             } else if name.as_str() == "policy" {
                 // Run tests for policy V1 and V2
                 cmd!(sh, "cargo test").args(["-p", name.as_str()]).run()?;
