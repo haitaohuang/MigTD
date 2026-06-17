@@ -297,6 +297,22 @@ pub struct Validity {
     not_after: Time,
 }
 
+impl Validity {
+    pub fn not_after(&self) -> &Time {
+        &self.not_after
+    }
+}
+
+impl Time {
+    /// Convert to a unix duration for uniform comparison across UtcTime/GeneralizedTime.
+    pub fn to_unix_duration(&self) -> core::time::Duration {
+        match self {
+            Time::Utc(t) => t.to_unix_duration(),
+            Time::Generalized(t) => t.to_unix_duration(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Sequence)]
 pub struct SubjectPublicKeyInfo<'a> {
     pub algorithm: AlgorithmIdentifier<'a>,

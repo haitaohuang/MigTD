@@ -371,6 +371,35 @@ fn check_root_ca_match(
     Ok(())
 }
 
+/// Validates that the peer certificate chain's leaf certificate expiration (notAfter)
+/// is the same as or later than the local chain's leaf certificate expiration.
+///
+/// This ensures the source MigTD does not migrate to a destination whose signing
+/// certificate expires sooner than the local one.
+pub fn validate_peer_leaf_expiration(
+    local_chain_pem: &[u8],
+    peer_chain_pem: &[u8],
+) -> Result<()> {
+    let local_chain = extract_cert_chain_from_pem(local_chain_pem)?;
+    let peer_chain = extract_cert_chain_from_pem(peer_chain_pem)?;
+
+    let local_leaf = x509::Certificate::from_der(local_chain[0].as_ref())
+        .map_err(|_| Error::ParseCertificate)?;
+    let peer_leaf =
+        x509::Certificate::from_der(peer_chain[0].as_ref()).map_err(|_| Error::ParseCertificate)?;
+
+    let local_expiry = local_leaf.tbs_certificate.validity.not_after().to_unix_duration();
+    let peer_expiry = peer_leaf.tbs_certificate.validity.not_after().to_unix_duration();
+
+    if peer_expiry < local_expiry {
+        return Err(Error::PeerCertChainValidation(
+            "Peer leaf certificate expires earlier than local leaf certificate".into(),
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,6 +672,90 @@ mdG27TBGsOS6KzfZ7avUDurwwFx++58HjoLq68p8jvKQBQJjco9bcwUFAjEA7otq
         match result {
             Err(Error::PeerCertChainValidation(msg)) => {
                 assert!(msg.contains("non-CA"), "unexpected error message: {msg}");
+            }
+            other => panic!("Expected PeerCertChainValidation, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_peer_leaf_expiration_same_chain() {
+        // Same chain: peer expiry == local expiry, should pass.
+        let chain = test_chain();
+        assert!(validate_peer_leaf_expiration(chain, chain).is_ok());
+    }
+
+    // Chain with a short-lived leaf cert (expires 2026-07-17).
+    // Used with test_chain() (leaf expires 2027-05-12) for expiration comparison tests.
+    fn short_lived_chain() -> &'static [u8] {
+        b"-----BEGIN CERTIFICATE-----
+MIICVTCCAdugAwIBAgIUPINzY1Cz4ZNuGGeaM/JQBejKFJgwCgYIKoZIzj0EAwIw
+ZTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEUMBIGA1UECgwLVGVzdCBJc3N1ZXIxHTAbBgNVBAMMFFRlc3QgSW50ZXJtZWRp
+YXRlIENBMB4XDTI2MDYxNzIxMTIwM1oXDTI2MDcxNzIxMTIwM1owXzELMAkGA1UE
+BhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEUMBIGA1UE
+CgwLVGVzdCBJc3N1ZXIxFzAVBgNVBAMMDlRlc3QgTGVhZiBDZXJ0MHYwEAYHKoZI
+zj0CAQYFK4EEACIDYgAEECFTSUiQQACo7Uwdzb5x7kMZ4VxhYwZUAuRsyOZfsli0
+GvaevPs0xU0rQWqJbJ7FpNOSNKsYhkQqRcpuSnFN8UnxEHsSD+/5IeUCW/S//kKS
+xdIqcmY8j9+tlWGI79I/o1IwUDAOBgNVHQ8BAf8EBAMCB4AwHQYDVR0OBBYEFAFQ
+AuVTJYPKIwFSW1IiqEdO/WTXMB8GA1UdIwQYMBaAFGJzopJ27XvM+SeZqVOweYHS
+vt07MAoGCCqGSM49BAMCA2gAMGUCMQDNEdpcuKQEBuGh5iyND3QyXdmFQ8cpWtlM
+5k4/27mpWMFlae3i27oZaSaCgfbjEDACMCyKRJUeGweCehfA+n6lj5CJXLiGiYO6
+sId+LfE+dfA7SDIBZapZLYk2whKiKurdpA==
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIICZDCCAeqgAwIBAgIUN0ABLpneRgJtt3HJ4jNAKci6QiswCgYIKoZIzj0EAwIw
+XTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEUMBIGA1UECgwLVGVzdCBJc3N1ZXIxFTATBgNVBAMMDFRlc3QgUm9vdCBDQTAe
+Fw0yNjA2MTcyMTEyMDNaFw0zMTA2MTYyMTEyMDNaMGUxCzAJBgNVBAYTAlVTMQsw
+CQYDVQQIDAJDQTEUMBIGA1UEBwwLU2FudGEgQ2xhcmExFDASBgNVBAoMC1Rlc3Qg
+SXNzdWVyMR0wGwYDVQQDDBRUZXN0IEludGVybWVkaWF0ZSBDQTB2MBAGByqGSM49
+AgEGBSuBBAAiA2IABAbxExS54SaIUhdWw3Tjz/8GOWuIb2xuVlrjzcVA/duyj2m2
+ZbJ0XyevdPxLdvnFdI1w/QivoeBasrdBlfU1IpWzpmWGXpIAKk471e0TGCtTUyDx
+xZPbkXG+Rkrgd0suPKNjMGEwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC
+AQYwHQYDVR0OBBYEFGJzopJ27XvM+SeZqVOweYHSvt07MB8GA1UdIwQYMBaAFIYX
+doaFQA/mYUI25xZWk8iOacXvMAoGCCqGSM49BAMCA2gAMGUCMGaqw3Thkbh5K37x
+4Ud7pRN0gjOjN0z+8YW0V9/97Rmmd6Ab/JsN1nOaopF3ySOzCgIxAKXZo2Tz1vNJ
+bqCdL6xepNnNuSZRIRbYkBv0b4JGMhjgahx7YQGNOZpZyoQRH4OL0g==
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIICTTCCAdKgAwIBAgIUYIazf3T7OovVTBZfD8vBJA2J/fswCgYIKoZIzj0EAwIw
+XTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEUMBIGA1UECgwLVGVzdCBJc3N1ZXIxFTATBgNVBAMMDFRlc3QgUm9vdCBDQTAe
+Fw0yNjA2MTcyMTEyMDNaFw0zNjA2MTQyMTEyMDNaMF0xCzAJBgNVBAYTAlVTMQsw
+CQYDVQQIDAJDQTEUMBIGA1UEBwwLU2FudGEgQ2xhcmExFDASBgNVBAoMC1Rlc3Qg
+SXNzdWVyMRUwEwYDVQQDDAxUZXN0IFJvb3QgQ0EwdjAQBgcqhkjOPQIBBgUrgQQA
+IgNiAARJfd/gTjNobBcSR/bEl/p2Gnvu4x5rIyco4DYJbjCnYJnWHWDzjL+nODSv
+1WUzGRtgI3kB1GaAvggg8//dSjs6bdipys+q/qMLpFx1P5aPsJK9nWahK9SGn/xs
+JHghItKjUzBRMB0GA1UdDgQWBBSGF3aGhUAP5mFCNucWVpPIjmnF7zAfBgNVHSME
+GDAWgBSGF3aGhUAP5mFCNucWVpPIjmnF7zAPBgNVHRMBAf8EBTADAQH/MAoGCCqG
+SM49BAMCA2kAMGYCMQC/W+C9WUM+TlPQ9Ck1xyncgy8BXhMf77t2m4yfKYY2lDs0
+XzTlh81TV3kxbVIAl/ACMQDZjU3nVeQl2NitO3CSLhULgDEHNH+yp4jPqi83Wk0v
+1nGuDm9+Ws/DZgcwSjxxXxA=
+-----END CERTIFICATE-----
+"
+    }
+
+    #[test]
+    fn test_validate_peer_leaf_expiration_peer_longer_lived() {
+        // local leaf expires 2026-07-17, peer leaf expires 2027-05-12: should pass.
+        let local = short_lived_chain();
+        let peer = test_chain();
+        assert!(validate_peer_leaf_expiration(local, peer).is_ok());
+    }
+
+    #[test]
+    fn test_validate_peer_leaf_expiration_peer_shorter_lived() {
+        // local leaf expires 2027-05-12, peer leaf expires 2026-07-17: should fail.
+        let local = test_chain();
+        let peer = short_lived_chain();
+        let result = validate_peer_leaf_expiration(local, peer);
+        assert!(result.is_err());
+        match result {
+            Err(Error::PeerCertChainValidation(msg)) => {
+                assert!(
+                    msg.contains("expires earlier"),
+                    "unexpected error message: {msg}"
+                );
             }
             other => panic!("Expected PeerCertChainValidation, got: {other:?}"),
         }

@@ -215,6 +215,23 @@ mod v2 {
             .evaluate_against_policy(&policy.policy_data)?;
         log::info!("BC> POL-DST-06 evaluate_against_policy ok\n");
 
+        // Verify that destination's signing cert chain leaf expiration dates are
+        // not earlier than our local ones (Policy and ServTDTCBMapping chains).
+        let local_policy_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
+        crypto::validate_peer_leaf_expiration(
+            local_policy_chain,
+            verified_policy_dst.policy_issuer_chain.as_bytes(),
+        )
+        .map_err(|_| PolicyError::PeerCertChainValidation)?;
+        crypto::validate_peer_leaf_expiration(
+            policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
+            verified_policy_dst
+                .servtd_tcb_mapping_issuer_chain
+                .as_bytes(),
+        )
+        .map_err(|_| PolicyError::PeerCertChainValidation)?;
+        log::info!("BC> POL-DST-07 validate_peer_leaf_expiration ok\n");
+
         Ok(suppl_data)
     }
 
@@ -288,6 +305,22 @@ mod v2 {
         verified_policy_dst
             .policy_data
             .evaluate_against_policy(&policy.policy_data)?;
+
+        // Verify that destination's signing cert chain leaf expiration dates are
+        // not earlier than our local ones (Policy and ServTDTCBMapping chains).
+        let local_policy_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
+        crypto::validate_peer_leaf_expiration(
+            local_policy_chain,
+            verified_policy_dst.policy_issuer_chain.as_bytes(),
+        )
+        .map_err(|_| PolicyError::PeerCertChainValidation)?;
+        crypto::validate_peer_leaf_expiration(
+            policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
+            verified_policy_dst
+                .servtd_tcb_mapping_issuer_chain
+                .as_bytes(),
+        )
+        .map_err(|_| PolicyError::PeerCertChainValidation)?;
 
         Ok(tdx_report.as_bytes().to_vec())
     }
