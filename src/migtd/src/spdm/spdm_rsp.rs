@@ -528,7 +528,8 @@ pub fn handle_exchange_mig_attest_info_req(
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
-    // SERVTD_EXT — 272 bytes when opted in, empty when opted out.
+    // SERVTD_EXT — policy_v2 only: 272 bytes when opted in, empty when opted out.
+    // For v1, this element must always be empty (length=0).
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
         error!(
@@ -538,6 +539,7 @@ pub fn handle_exchange_mig_attest_info_req(
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
     let servtd_ext_len = vdm_element.length as usize;
+    #[cfg(feature = "policy_v2")]
     if servtd_ext_len != 0 && servtd_ext_len != core::mem::size_of::<ServtdExt>() {
         error!(
             "Invalid VDM message SerVtdExt length: {} (expected 0 or {})\n",
@@ -546,11 +548,21 @@ pub fn handle_exchange_mig_attest_info_req(
         );
         return Err(SPDM_STATUS_INVALID_MSG_SIZE);
     }
+    #[cfg(not(feature = "policy_v2"))]
+    if servtd_ext_len != 0 {
+        error!(
+            "Unexpected non-empty SerVtdExt in v1 mode (length={})\n",
+            servtd_ext_len
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_SIZE);
+    }
     let servtd_ext_bytes = reader
         .take(servtd_ext_len)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     #[cfg(feature = "policy_v2")]
     let servtd_ext_bytes_vec = servtd_ext_bytes.to_vec();
+    #[cfg(not(feature = "policy_v2"))]
+    let _ = servtd_ext_bytes;
 
     // Store SERVTD_EXT in ResponderContextEx for later use during MSK exchange.
     #[cfg(feature = "policy_v2")]
@@ -570,7 +582,8 @@ pub fn handle_exchange_mig_attest_info_req(
         };
     };
 
-    // Init TDINFO from src — empty when SERVTD_EXT not opted in
+    // Init TDINFO from src — policy_v2 only, paired with SERVTD_EXT.
+    // For v1, this element must always be empty.
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::TdReportInit {
         error!(
@@ -596,6 +609,14 @@ pub fn handle_exchange_mig_attest_info_req(
             servtd_ext_len, vdm_element.length
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    #[cfg(not(feature = "policy_v2"))]
+    if vdm_element.length != 0 {
+        error!(
+            "Unexpected non-empty TdReportInit in v1 mode (length={})\n",
+            vdm_element.length
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_SIZE);
     }
     let td_report_init = reader
         .take(vdm_element.length as usize)

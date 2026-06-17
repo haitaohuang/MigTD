@@ -422,8 +422,10 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         .extend_from_slice(&mig_policy_src_hash)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
-    // SERVTD_EXT: send 272 bytes when opted in, empty when opted out.
+    // SERVTD_EXT: only used with policy_v2. Send 272 bytes when opted in, empty when opted out.
     // init_tdinfo follows the same: present when opted in, empty when opted out.
+    // For v1, always send empty elements to maintain wire format compatibility.
+    #[cfg(feature = "policy_v2")]
     {
         use crate::migration::servtd_ext::read_servtd_ext;
 
@@ -431,7 +433,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
             .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
 
         // Reject VMM misconfiguration: init_tdinfo provided but target TD opted out.
-        #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+        #[cfg(feature = "vmcall-raw")]
         if servtd_ext.is_none() && mig_info.init_td_info_if_present().is_some() {
             log::error!(
                 "Misconfiguration: VMM provided init_tdinfo but target TD has no SERVTD_EXT\n"
@@ -458,15 +460,15 @@ pub async fn send_and_receive_sdm_migration_attest_info(
 
         // Init TDINFO: present only when SERVTD_EXT is opted in.
         // When opted in, use VMM-provided init_td_info or fall back to local tdcall_report.
-        #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+        #[cfg(feature = "vmcall-raw")]
         let tdinfo_init_local;
-        #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
+        #[cfg(not(feature = "vmcall-raw"))]
         let tdinfo_init_owned: alloc::vec::Vec<u8>;
 
         let tdinfo_init: &[u8] = if servtd_ext.is_none() {
             &[]
         } else {
-            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+            #[cfg(feature = "vmcall-raw")]
             {
                 if let Some(td_info) = mig_info.init_td_info_if_present() {
                     log::trace!(
@@ -489,7 +491,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
                     &tdinfo_init_local
                 }
             }
-            #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
+            #[cfg(not(feature = "vmcall-raw"))]
             {
                 tdinfo_init_owned = {
                     let report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
@@ -511,6 +513,24 @@ pub async fn send_and_receive_sdm_migration_attest_info(
                 .extend_from_slice(tdinfo_init)
                 .ok_or(SPDM_STATUS_BUFFER_FULL)?;
         }
+    }
+    #[cfg(not(feature = "policy_v2"))]
+    {
+        // v1: send empty SerVtdExt and TdReportInit elements for wire format compatibility.
+        let servtd_ext_element = VdmMessageElement {
+            element_type: VdmMessageElementType::SerVtdExt,
+            length: 0,
+        };
+        cnt += servtd_ext_element
+            .encode(&mut writer)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        let tdinfo_init_element = VdmMessageElement {
+            element_type: VdmMessageElementType::TdReportInit,
+            length: 0,
+        };
+        cnt += tdinfo_init_element
+            .encode(&mut writer)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
     }
 
     spdm_requester.common.reset_buffer_via_request_code(
