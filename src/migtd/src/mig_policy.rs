@@ -377,12 +377,12 @@ mod v2 {
         let _engine_svn = {
             let tdinfo_hash = tdinfo_hash_from_td_info(&init_td_info)?;
             policy
-                .servtd_tcb_mapping
-                .get_engine_svn_by_tdinfo_hash(&tdinfo_hash)
+                .servtd_lookup_by_tdinfo_hash(&tdinfo_hash)
                 .ok_or(PolicyError::SvnMismatch)?
+                .isvsvn
         };
         #[cfg(feature = "use-mock-quote")]
-        log::warn!("use-mock-quote: skipping get_engine_svn_by_tdinfo_hash allowlist check\n");
+        log::warn!("use-mock-quote: skipping servtd_lookup_by_tdinfo_hash allowlist check\n");
 
         // If backward policy exists, evaluate the migration src based on it.
         let relative_reference = get_local_tcb_evaluation_info()?;
@@ -651,6 +651,33 @@ mod v2 {
         Ok(rtmrs)
     }
 
+<<<<<<< HEAD
+=======
+    fn setup_evaluation_data_with_tdinfo(
+        td_info: &TdInfo,
+        policy: &VerifiedPolicy,
+    ) -> Result<PolicyEvaluationInfo, PolicyError> {
+        // Build the canonical TDINFO_STRUCT bytes from the TDR's TdInfo and
+        // derive the outer tdinfo_hash, mirroring what the SEAM module
+        // computes for SERVTD_INFO_HASH (attr=0).
+        let tdinfo_hash = tdinfo_hash_from_td_info(td_info)?;
+        let migtd = policy.servtd_lookup_by_tdinfo_hash(&tdinfo_hash);
+
+        Ok(PolicyEvaluationInfo {
+            tee_tcb_svn: None,
+            tcb_date: None,
+            tcb_status: None,
+            tcb_evaluation_number: None,
+            fmspc: None,
+            migtd_isvsvn: migtd.as_ref().map(|m| m.isvsvn),
+            migtd_tcb_date: migtd.as_ref().map(|m| m.tcb_date.clone()),
+            migtd_tcb_status: migtd.as_ref().map(|m| m.tcb_status.clone()),
+            pck_crl_num: None,
+            root_ca_crl_num: None,
+        })
+    }
+
+>>>>>>> 99f84321 (policy: CoRIM hash endorsement on top of one-hash TCB mapping)
     fn setup_evaluation_data(
         fmspc: [u8; 6],
         suppl_data: &[u8],
@@ -662,11 +689,7 @@ mod v2 {
         let tcb_evaluation_number = get_tcb_evaluation_number_from_collateral(&collateral)?;
         let report_value = Report::new(suppl_data)?;
 
-        let migtd_svn = policy
-            .servtd_tcb_mapping
-            .get_engine_svn_by_report(&report_value);
-
-        let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
+        let migtd = policy.servtd_lookup_by_report(&report_value);
         let pck_crl_num = get_crl_number(collaterals.pck_crl.as_bytes())
             .map_err(|_| PolicyError::InvalidCollateral)?;
         let root_ca_crl_num = get_crl_number(collaterals.root_ca_crl.as_bytes())
@@ -678,9 +701,9 @@ mod v2 {
             tcb_status: Some(tcb_status.as_str().to_string()),
             tcb_evaluation_number: Some(tcb_evaluation_number),
             fmspc: Some(fmspc),
-            migtd_isvsvn: migtd_svn,
-            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
-            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
+            migtd_isvsvn: migtd.as_ref().map(|m| m.isvsvn),
+            migtd_tcb_date: migtd.as_ref().map(|m| m.tcb_date.clone()),
+            migtd_tcb_status: migtd.as_ref().map(|m| m.tcb_status.clone()),
             pck_crl_num: Some(pck_crl_num),
             root_ca_crl_num: Some(root_ca_crl_num),
         })
@@ -691,11 +714,7 @@ mod v2 {
         policy: &VerifiedPolicy,
     ) -> Result<PolicyEvaluationInfo, PolicyError> {
         let tdinfo_hash = tdinfo_hash_from_td_info(&tdreport.td_info)?;
-        let migtd_svn = policy
-            .servtd_tcb_mapping
-            .get_engine_svn_by_tdinfo_hash(&tdinfo_hash);
-
-        let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
+        let migtd = policy.servtd_lookup_by_tdinfo_hash(&tdinfo_hash);
 
         Ok(PolicyEvaluationInfo {
             tee_tcb_svn: Some(tdreport.tee_tcb_info.tee_tcb_svn),
@@ -703,9 +722,9 @@ mod v2 {
             tcb_status: None,
             tcb_evaluation_number: None,
             fmspc: None,
-            migtd_isvsvn: migtd_svn,
-            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
-            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
+            migtd_isvsvn: migtd.as_ref().map(|m| m.isvsvn),
+            migtd_tcb_date: migtd.as_ref().map(|m| m.tcb_date.clone()),
+            migtd_tcb_status: migtd.as_ref().map(|m| m.tcb_status.clone()),
             pck_crl_num: None,
             root_ca_crl_num: None,
         })
@@ -997,6 +1016,41 @@ mod v2 {
             #[cfg(feature = "use-mock-quote")]
             log::warn!("use-mock-quote: skipping get_engine_svn_by_tdinfo_hash allowlist check\n");
         }
+<<<<<<< HEAD
+=======
+        log::info!("BC> POL-SRCv2-05 verify_peer_init_tdinfo_against_suppl_data done\n");
+
+        // Verify init TDINFO integrity against ServtdExt hash
+        let servtd_ext_obj =
+            ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
+
+        let init_td_info = verify_init_tdinfo(init_tdinfo, &servtd_ext_obj)?;
+        log::info!("BC> POL-SRCv2-06 verify_init_tdinfo ok\n");
+
+        // Allowlist gate: init MigTD measurements must be in servtd_tcb_mapping.
+        // Under use-mock-quote the MRTD belongs to a different binary (mock build)
+        // and won't be in the tcb_mapping generated for the production image.
+        #[cfg(not(feature = "use-mock-quote"))]
+        let _engine_svn = {
+            let tdinfo_hash = tdinfo_hash_from_td_info(&init_td_info)?;
+            policy
+                .servtd_lookup_by_tdinfo_hash(&tdinfo_hash)
+                .ok_or(PolicyError::SvnMismatch)?
+                .isvsvn
+        };
+        #[cfg(feature = "use-mock-quote")]
+        log::warn!("use-mock-quote: skipping servtd_lookup_by_tdinfo_hash allowlist check\n");
+        log::info!("BC> POL-SRCv2-07 servtd_lookup_by_tdinfo_hash ok\n");
+
+        // Policy eval with init TDINFO as relative reference (skip global —
+        // platform checks already done above with skip_global=false)
+        let init_reference = setup_evaluation_data_with_tdinfo(&init_td_info, policy)?;
+        log::info!("BC> POL-SRCv2-08 setup_evaluation_data_with_tdinfo ok\n");
+        policy
+            .policy_data
+            .evaluate_policy_common(&evaluation_data_src, &init_reference, true)?;
+        log::info!("BC> POL-SRCv2-09 evaluate_policy_common (init ref) ok\n");
+>>>>>>> 99f84321 (policy: CoRIM hash endorsement on top of one-hash TCB mapping)
 
         Ok(suppl_data)
     }
