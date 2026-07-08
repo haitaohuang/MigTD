@@ -2,10 +2,12 @@ RTMR1 Signer-Anchor Measurement & servTD Signer Revocation
 ================================================
 
 > This proposal has two coupled parts: (1) **what MigTD measures into RTMR1** — a
-> stable *signer anchor* rather than the raw issuer-chain bytes — and (2) the
-> **servTD signer-key revocation** control that mitigates the one security relaxation
-> the anchor introduces. The RTMR2 / TCB-mapping circular-dependency work is covered
-> separately in [tcb_mapping_design_proposal.md](./tcb_mapping_design_proposal.md);
+> stable *signer anchor* (root fingerprint + required leaf EKU) rather than the raw
+> issuer-chain bytes, with MigTD-to-MigTD peer validation updated to enforce that same
+> signer fingerprint — and (2) the **servTD signer-key revocation** control that mitigates
+> the one security relaxation the anchor introduces. The RTMR2 / TCB-mapping
+> circular-dependency work is covered separately in
+> [tcb_mapping_design_proposal.md](./tcb_mapping_design_proposal.md);
 > the anchor is the companion change called out there under *"RTMR1 signer anchor for
 > key rotation"*.
 > For the concrete current measurement values see
@@ -52,10 +54,11 @@ stable and every issuer in the chain is itself a CA (check 4). Intermediates are
 validated *structurally* — signature integrity (check 1) and the CA attribute (check 4) —
 just not by identity.
 
-This rests on an **assumption about the leaf Subject**: the leaf cert's Subject Name
-uniquely identifies the intended usage for the product/model — distinct usages must use
-distinct Subject Names in their leaf certs. The RTMR1 anchor defined below inherits this
-assumption, since it commits to that Subject (`S`).
+This rests on an **assumption about usage identity**: today the leaf's Subject Name is taken
+to uniquely identify the intended usage for the product/model — distinct usages need distinct
+Subjects. The proposal below makes that usage identity **explicit** as a dedicated Extended Key
+Usage (EKU) OID and commits to it in both the RTMR1 anchor and the updated peer validation,
+rather than relying on Subject-DN convention.
 
 ```
    Runtime trust model (peer validation)      RTMR1 measurement (today)
@@ -100,7 +103,7 @@ trust anchor:
    region B leaf ─┼─ same root + same leaf Subject, different leaf cert/chain
    region C leaf ─┘
         raw chain in RTMR1:  3 different RTMR1  (chain bytes differ per region)
-        signer anchor:       1 RTMR1 anchor     (root + leaf Subject identical)
+        signer anchor:       1 RTMR1 anchor     (root + signer identity identical)
 ```
 
 So the trust-anchor measurement fragments by region for no trust-relevant reason — each
@@ -134,14 +137,16 @@ kept byte-consistent forever (two sources of truth for one signer).
 # Proposal — measure a stable signer anchor
 
 Replace the raw-chain RTMR1 extend with an extend over a **signer anchor** `A` that
-commits to *exactly the trust-anchor identity the runtime enforces* — the root CA and
-the leaf Subject — and nothing else.
+commits to a stable *signer fingerprint* — the root CA and the leaf's required signer-purpose
+EKU — and nothing else. This proposal also updates MigTD-to-MigTD peer validation to key on the
+**same** signer fingerprint (replacing today's leaf-Subject-name match), so the measured value
+and the runtime trust check ask one identical question.
 
 | | Today | Proposed |
 |---|-------|----------|
 | **RTMR1 extend input** | `SHA384(raw issuer chain PEM bytes)` | `SHA384(A)` where `A` is the signer anchor below |
 | **CFV slot `MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID`** | full signing cert chain (unchanged) | full signing cert chain (**unchanged**) |
-| **What RTMR1 is sensitive to** | every byte of the chain (incl. leaf key) | root CA DER + leaf Subject DER only |
+| **What RTMR1 is sensitive to** | every byte of the chain (incl. leaf key) | root CA fingerprint + required leaf EKU only |
 
 The CFV still ships the **full** chain (peer validation and policy-signer signature
 verification still need it); only **what is hashed into RTMR1** changes — a small,
@@ -151,60 +156,56 @@ stable anchor derived from the chain rather than the chain's raw bytes.
 
 Define `H(x) = SHA384(x)`.
 
-1. Root component:  `R = H(DER(root_certificate))`
-2. Leaf-subject component:  `S = H(DER(leaf_certificate.tbsCertificate.subject))`
-3. Domain-separated anchor:  `A = H("MIGTD-RTMR1-ANCHOR-V1" || 0x00 || R || 0x00 || S)`
+1. Root fingerprint:  `R = H(DER(root_certificate))`
+2. Signer purpose:  `EKU_OID` — the OID of the required leaf Extended Key Usage: a dedicated OID
+   under the issuer's org arc (e.g. `1.3.6.1.4.1.343.<n>`) identifying the MigTD servTD signer.
+3. Domain-separated anchor:  `A = H("MIGTD-RTMR1-ANCHOR-V1" || 0x00 || R || 0x00 || EKU_OID)`
 4. RTMR extend chain:
    - `RTMR1_0 = 48-byte zero`
    - `RTMR1_1 = H( RTMR1_0 || H(separator_event_payload) )`   *(td-shim boot separator, unchanged)*
    - `RTMR1_final = H( RTMR1_1 || H(A) )`                     *(MigTD core, anchor event)*
 
-`DER(...subject)` is the raw DER encoding of the leaf `tbsCertificate.subject`, used
-(rather than a text rendering of the Distinguished Name) to avoid encoding ambiguity.
-The `"MIGTD-RTMR1-ANCHOR-V1"` tag provides domain separation and a version hook for
-future formula changes.
+`R` is the SHA-384 fingerprint of the root CA's DER, and `EKU_OID` is the required signer EKU as a
+DER-encoded OID. The `"MIGTD-RTMR1-ANCHOR-V1"` tag provides domain separation and a version hook
+for future formula changes.
 
-`A` deliberately commits to **only** the root CA and the leaf Subject — **not** the
-intermediate CAs — matching peer validation, which likewise does not pin intermediate
-identity. Intermediate-CA rotation under the same root + leaf Subject therefore leaves
-RTMR1 unchanged, exactly as leaf-key rotation does.
+`A` deliberately commits to **only** the root CA and the required leaf EKU — **not** the leaf
+public key and **not** the intermediate CAs — so leaf-key and intermediate-CA rotation under the
+same root + EKU leave RTMR1 unchanged.
 
 # Benefits
 
-- **No rotation churn** — `A` depends on the root CA and leaf Subject, not the leaf public
-  key, so a leaf re-issue under the same root + Subject leaves RTMR1 **unchanged**. With
-  the companion RTMR2 measuring policy without TCBMapping, the whole `tdinfo_hash` is then
-  unchanged when nothing else changes — a key rotation needs no new endorsement /
-  `svnMappings` entry.
-- **Intermediate-CA rotation is free too** — `A` excludes intermediate CAs (matching peer
-  validation, which does not pin intermediate identity), so rotating an intermediate CA
-  under the same root + leaf Subject also leaves RTMR1 unchanged — no rebuild, no new
-  endorsement.
-- **Region-independent measurement** — regional leaf certificates that share the root +
-  Subject produce the **same** RTMR1, and the same `tdinfo_hash` when nothing else differs,
-  so one endorsement covers all such regions instead of one per region.
-- **No CoRIM duplication** — RTMR1 commits to the *anchor identity* (root + Subject),
-  not the chain bytes, so the CoRIM remains the single carrier of the full chain. No
-  two-sources-of-truth synchronization burden.
-- **Measurement matches the trust model** — RTMR1's sensitivity becomes exactly that of
-  `validate_peer_cert_chain` (root DER + leaf Subject). The measured value answers the
-  same question the runtime asks.
-- **Trust-anchor changes stay visible** — changing the **root CA** DER changes `R` and
-  therefore RTMR1 (intended); only leaf-key churn is decoupled.
+- **No rotation churn** — leaf-key *and* intermediate-CA rotation under the same root + EKU leave
+  `A` unchanged (and, with the companion RTMR2, the whole `tdinfo_hash`), so no rebuild and no new
+  endorsement / `svnMappings` entry (Problem 1).
+- **Region-independent** — regional leaves sharing root + EKU yield the **same** RTMR1, so one
+  endorsement covers all regions instead of one per region (Problem 2).
+- **No CoRIM duplication** — RTMR1 commits to the signer fingerprint, not the chain bytes, so the
+  CoRIM stays the single carrier of the full chain (Problem 3).
+- **Measurement matches the trust model** — the anchor and the updated `validate_peer_cert_chain`
+  enforce the identical fingerprint, so the measured value answers exactly the runtime's question.
+- **Trust-anchor changes stay visible** — changing the **root CA** changes `R` and thus RTMR1
+  (intended); only leaf-key / intermediate churn is decoupled.
 
 # Design details
 
 ## Alignment with runtime peer validation
 
-The anchor is the measured projection of the two equality checks already enforced by
-`validate_peer_cert_chain` (`src/crypto/src/lib.rs:290`):
+The anchor and peer validation share **one** definition — the *signer fingerprint*
+(root CA fingerprint + required leaf EKU). This proposal updates `validate_peer_cert_chain`
+(`src/crypto/src/lib.rs:290`) to enforce that fingerprint, **replacing** today's
+leaf-Subject-name match, so the measured value and the runtime check ask the identical
+question:
 
-| Peer-validation check | Anchor component |
-|-----------------------|------------------|
-| Root CA must match (DER byte comparison) | `R = H(DER(root))` |
-| Leaf Subject Name must match | `S = H(DER(leaf subject))` |
-| Intermediate-CA identity **not** pinned (independent rotation allowed) | not folded into `A` — the anchor excludes intermediates, so intermediate rotation is measurement-stable |
-| Chain internal signatures valid; non-CA issuers rejected | enforced at runtime; not folded into `A` (integrity, not identity) |
+| Signer-fingerprint element | Peer validation (updated) | Anchor component |
+|----------------------------|---------------------------|------------------|
+| Root CA | must match (DER / fingerprint) | `R = H(DER(root))` |
+| Leaf signer purpose | leaf must assert the required `EKU_OID` | `EKU_OID` |
+| Intermediate-CA identity | **not** pinned (independent rotation allowed) | not folded into `A` |
+| Chain signatures valid; non-CA issuers rejected | enforced at runtime | integrity, not identity — not in `A` |
+
+The EKU OID must be provisioned (a dedicated org-arc OID) and issued into signer leaves; the
+updated peer check requires the leaf to assert it, exactly as the anchor commits to it.
 
 Contrast with `get_policy_signer_key_hash` (`src/crypto/src/lib.rs:105`), which hashes
 the **leaf public key** and therefore *does* change on rotation. The anchor deliberately
@@ -213,13 +214,13 @@ avoids the leaf key so that rotation is measurement-stable.
 ## What changes when the leaf signing key rotates
 
 Assumption: only the leaf signing key rotates — MigTD code, policy rules, root CA, and
-leaf Subject are unchanged.
+required leaf EKU are unchanged.
 
 | Component | Changes? | Why |
 |-----------|----------|-----|
 | **MRTD** | No | Cert chain lives in the CFV (unmeasured content of the IGVM image) |
 | **RTMR0** | No | MigTD binary code unchanged |
-| **RTMR1** | **No** | `A` depends on root DER + leaf Subject DER, not the leaf key |
+| **RTMR1** | **No** | `A` depends on root fingerprint + required leaf EKU, not the leaf key |
 | **RTMR2** | No¹ | the companion RTMR2 (policy without TCBMapping) is unchanged here |
 | **`tdinfo_hash` / endorsement** | No | no register changed, so the hash — and its existing endorsement — still apply |
 | **IGVM rebuild** | No | only the CFV leaf cert is swapped (`td-shim-enroll`); the measurement is unchanged |
@@ -230,17 +231,15 @@ signing leaf — the trust authority RTMR1 anchors — leaves RTMR2 (and the has
 
 ## Regional leaf certificates
 
-Regional leaf certificates are just the spatial version of rotation: every region whose
-leaf shares the root + Subject produces the **same RTMR1**, and the **same `tdinfo_hash`** when
-nothing else differs. Operators provision region-specific leaf certs into each region's
-CFV slot (`MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID`); the authority then publishes **one**
-`svnMappings` entry for all of them instead of one per region. Peer migration across
-regions passes because the runtime check keys on root + Subject.
+Regional leaf certificates are the spatial version of rotation. Operators provision each
+region's leaf into that region's CFV slot (`MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID`); since all
+share root + EKU, they yield one RTMR1 and the authority publishes **one** `svnMappings` entry
+for all regions. Cross-region migration passes because peer validation also keys on root + EKU.
 
 ## Boot & offline measurement flow
 
 - **Boot (MigTD core):** load the chain from CFV → parse the root certificate and the
-  leaf `tbsCertificate.subject` → compute `R`, `S`, `A` → extend RTMR1 with `H(A)` and
+  leaf's Extended Key Usage → compute `R`, `A` → extend RTMR1 with `H(A)` and
   emit one event-log entry. The full chain remains available for signature verification
   and peer validation.
 - **Offline (`migtd-hash` `rtmr1()`):** compute the identical `A` from the same CFV
@@ -249,35 +248,35 @@ regions passes because the runtime check keys on root + Subject.
 
 # Security considerations — signing-key compromise
 
-The anchor lowers RTMR1's sensitivity from the exact issuer-chain bytes to **root CA + leaf
-Subject**. That relaxation is the source of the proposal's rotation/region agility — and of one
+The anchor lowers RTMR1's sensitivity from the exact issuer-chain bytes to **root CA + required
+leaf EKU**. That relaxation is the source of the proposal's rotation/region agility — and of one
 new risk. This section states what the change introduces and what it leaves unchanged.
 
 ## Limitation introduced: stolen intermediate cert chain
 
 Raw-chain RTMR1 (today) hashes the exact chain bytes, so **any** certificate change in the chain
 alters RTMR1 — and therefore `tdinfo_hash` — including a leaf freshly minted by a **stolen
-intermediate CA** under the same root and same leaf Subject. The signer anchor commits to root +
-leaf Subject only, so that same stolen-intermediate-minted leaf becomes
+intermediate CA** under the same root and asserting the same leaf EKU. The signer anchor commits
+to root + EKU only, so that same stolen-intermediate-minted leaf becomes
 **measurement-indistinguishable**: identical `A`, identical RTMR1, identical `tdinfo_hash`.
 
 ```
-   stolen intermediate CA key (same root + same leaf Subject)
+   stolen intermediate CA key (same root + required leaf EKU)
              │  mints a new leaf, signs
              ▼
    forged servtdTcbMapping:  { tdinfo_hash(vulnerable_MigTD) → high SVN }
              │
-             ▼   passes validate_peer_cert_chain (root + Subject + CA-attr) and CoRIM x5chain
+             ▼   passes validate_peer_cert_chain (root + EKU + CA-attr) and CoRIM x5chain
              ▼
    vulnerable MigTD resolves to high SVN → clears the baseline → accepted
 
    raw-chain RTMR1 :  new leaf ⇒ different tdinfo_hash  (measurement-visible)
-   signer anchor   :  same root+Subject ⇒ SAME tdinfo_hash  (measurement-INvisible)  ← new risk
+   signer anchor   :  same root+EKU ⇒ SAME tdinfo_hash  (measurement-INvisible)  ← new risk
 ```
 
 The anchor trades away RTMR1's ability to distinguish a different signing certificate under the
-same root + Subject. A **stolen intermediate CA** — which can issue an arbitrary Subject-matching
-leaf — is the concrete exposure this proposal introduces, and it must be mitigated at the
+same root + EKU. A **stolen intermediate CA** — which can issue an arbitrary leaf bearing the
+required EKU — is the concrete exposure this proposal introduces, and it must be mitigated at the
 PKI/authorization layer (below).
 
 ## Not introduced here: stolen leaf key (reused certificate)
@@ -293,7 +292,7 @@ Neither attack is visible to measurement, so both are handled at the PKI/policy 
 controls apply, each covering the two attacks differently:
 
 - **Strict key protection, especially of intermediate CA keys** — the primary control, since the
-  anchor cannot distinguish a rogue same-Subject leaf minted by a stolen intermediate. Keep
+  anchor cannot distinguish a rogue leaf bearing the required EKU minted by a stolen intermediate. Keep
   signing keys offline in an HSM, rarely used, ideally under m-of-n quorum.
 - **Certificate revocation (CRL)** — revoke the leaked leaf or intermediate certificate and have
   consumers reject it. It covers **both** attacks and is the only in-guest control that closes a
@@ -353,7 +352,7 @@ RTMR2 extend (like `servtdTcbMapping`), leaving `servtd_crl_num` as the sole ant
 - **The anchor changes only RTMR1.** RTMR2 (the policy) is the companion
   [TCB-mapping proposal](./tcb_mapping_design_proposal.md)'s concern. Together the two keep
   `tdinfo_hash` the same across leaf rotation and across regions whenever the code, policy
-  content, and trust anchor (root + Subject) are unchanged, while still binding the exact
+  content, and trust anchor (root + EKU) are unchanged, while still binding the exact
   policy content. (A genuine content change — e.g. re-issuing `servtdIdentity` — does
   change RTMR2 and the hash, as intended.)
 - **Orthogonal to the TCB-mapping proposal's RTMR2 changes.** That proposal's removal of the
@@ -362,10 +361,11 @@ RTMR2 extend (like `servtdTcbMapping`), leaving `servtd_crl_num` as the sole ant
   `policyData`), not RTMR1; the anchor is orthogonal to either and can ship before,
   after, or without them.
 - **Security trade-off — anchor binds identity, not the leaf key.** `A` commits to the
-  root CA and the leaf Subject — **not** the leaf public key, and **not** the intermediate
-  CAs. A leaf key (or an intermediate CA) compromised under the same root + Subject is
-  therefore *not* distinguished by RTMR1 alone. This matches the existing runtime trust
-  model and makes the root CA the unit of trust — the intended, explicit trade-off. Its
+  root CA and the required leaf EKU — **not** the leaf public key, and **not** the intermediate
+  CAs. A leaf key (or an intermediate CA) compromised under the same root + EKU is
+  therefore *not* distinguished by RTMR1 alone. This matches the updated runtime trust
+  model (which likewise keys on root + EKU) and makes the root CA the unit of trust — the
+  intended, explicit trade-off. Its
   consequences for a forged TCB mapping, and the mitigations, are detailed in
   *[Security considerations — signing-key compromise](#security-considerations--signing-key-compromise)* above.
 - **Root rotation still visible.** Rotating or adding a *root* CA changes `R` and thus
@@ -378,6 +378,6 @@ RTMR2 extend (like `servtdTcbMapping`), leaving `servtd_crl_num` as the sole ant
 | RTMR1 runtime extend (raw chain today) | `src/migtd/src/bin/migtd/main.rs` (`get_policy_issuer_chain_and_measure`) |
 | `mr_index 2 → RTMR1`, tag id | `src/migtd/src/event_log.rs` (`MR_INDEX_POLICY_ISSUER_CHAIN`, `TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN`) |
 | Offline RTMR1 reproduction | `tools/migtd-hash/src/lib.rs` (`rtmr1`) |
-| Peer trust model (root DER + leaf Subject) | `src/crypto/src/lib.rs:290` (`validate_peer_cert_chain`) |
+| Peer trust model (root DER + leaf Subject today; **updated** to root + leaf EKU) | `src/crypto/src/lib.rs:290` (`validate_peer_cert_chain`) |
 | Leaf-public-key hash (changes on rotation; not used by anchor) | `src/crypto/src/lib.rs:105` (`get_policy_signer_key_hash`) |
 | CFV slot holding the chain | `MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID` (`src/migtd/src/config.rs`) |
