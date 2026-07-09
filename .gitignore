@@ -40,3 +40,6 @@ config/AzCVMEmu/policy_v2_signed*.json
 config/AzCVMEmu/policy_issuer_chain*.pem
 config/Azure/policy_v2_signed*.json
 config/Azure/policy_issuer_chain*.pem
+
+# Build artifacts / local TiP packages
+out/

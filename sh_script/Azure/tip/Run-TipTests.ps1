@@ -18,7 +18,16 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-if ($PowerTestPath) { Import-Module (Join-Path $PowerTestPath 'TdxLiveMigrationUtilities.psm1') -Force }
+# Load the full PowerTest module (Initialize-TdxLmMachine + the TD-mapping cmdlets
+# span multiple nested modules of PowerTest.psd1) plus Hyper-V and HCSTest,
+# matching the OS PR-gate loopback tests. A single-.psm1 import is insufficient.
+if ($PowerTestPath) {
+    Import-Module (Join-Path $PowerTestPath 'PowerTest.psd1') -Force
+} elseif (-not (Get-Module PowerTest)) {
+    Import-Module PowerTest -Force
+}
+if (-not (Get-Module Hyper-V)) { Import-Module Hyper-V -Force }
+if (-not (Get-Module HCSTest)) { Import-Module HCSTest -ArgumentList @{ UseVersion2 = $true } }
 if ($InitializeHost) { Initialize-TdxLmMachine }
 
 $cases = @(

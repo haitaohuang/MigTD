@@ -5,8 +5,9 @@
 .DESCRIPTION
   Starts the given MigTD IGVM, registers its hash, creates a TDX guest, migrates
   it to localhost (loopback), and asserts the outcome. Cleans up afterwards.
-  Mirrors the Azure OS PR gate (Invoke-TdxLmE2ETest). Requires PowerTest's
-  TdxLiveMigrationUtilities for New-TestHcsMigTd; pass -PowerTestPath to import it.
+  Mirrors the Azure OS PR gate (Tdx.LiveMigration.Loopback.Tests). Requires the
+  PowerTest module (+ Hyper-V, HCSTest); pass -PowerTestPath (the PowerTest module
+  directory containing PowerTest.psd1) to import it.
 
 .EXAMPLE
   .\Invoke-TdxLmLoopback.ps1 -IgvmFilePath .\test-migtd-accept-all.igvm
@@ -23,9 +24,19 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# Load the full PowerTest module, not a single .psm1: the TD-mapping cmdlets
+# (Add/Remove-VmHostMigrationTdMapping) live in LiveMigrationUtilities.psm1 while
+# New-TestHcsMigTd lives in TdxLiveMigrationUtilities.psm1 -- both are nested
+# modules of PowerTest.psd1 (FunctionsToExport='*'). Also load Hyper-V (New-VM/
+# Move-VM/Set-VMHostMigrationPolicy) and HCSTest (Start/Stop-HcsSystem), matching
+# the OS PR-gate loopback tests (Tdx.LiveMigration.Loopback.Tests.ps1).
 if ($PowerTestPath) {
-    Import-Module (Join-Path $PowerTestPath 'TdxLiveMigrationUtilities.psm1') -Force
+    Import-Module (Join-Path $PowerTestPath 'PowerTest.psd1') -Force
+} elseif (-not (Get-Module PowerTest)) {
+    Import-Module PowerTest -Force
 }
+if (-not (Get-Module Hyper-V)) { Import-Module Hyper-V -Force }
+if (-not (Get-Module HCSTest)) { Import-Module HCSTest -ArgumentList @{ UseVersion2 = $true } }
 if (-not (Test-Path $IgvmFilePath)) { throw "IGVM not found: $IgvmFilePath" }
 if (-not (Test-Path $HashFilePath)) { throw "Hash file not found: $HashFilePath" }
 $MigTdHash = (Get-Content $HashFilePath -Raw).Trim()

@@ -209,6 +209,8 @@ FETCH_COLLATERALS=false
 AZURE_REGION="useast"
 ALLOW_ALL=false
 REJECT=false
+TDINFO_IMAGE=""
+CERT_DIR_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -238,6 +240,19 @@ while [[ $# -gt 0 ]]; do
             AZURE_REGION="$2"
             shift 2
             ;;
+        --tdinfo-image)
+            # Bind tcb_mapping to the ACTUAL built image's tdinfo_hash
+            # (measure-then-bind) instead of the mock report data.
+            TDINFO_IMAGE="$2"
+            shift 2
+            ;;
+        --cert-dir)
+            # Reuse a persistent signing key + chain + signed identity across a
+            # measure-then-rebind rebuild so the servtdIdentity measured into
+            # RTMR2 (hence tdinfo_hash) stays byte-stable. Key is not deleted.
+            CERT_DIR_OVERRIDE="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo
@@ -249,6 +264,10 @@ while [[ $# -gt 0 ]]; do
             echo "  --fetch-collaterals          Fetch fresh collaterals from Azure THIM before generating policy"
             echo "  --azure-region REGION        Azure region for THIM (useast, westus, northeurope)"
             echo "                               (default: useast, applies with --fetch-collaterals)"
+            echo "  --tdinfo-image IGVM          Compute tcb_mapping tdinfo_hash from this built IGVM"
+            echo "                               (measure-then-bind) instead of the mock report"
+            echo "  --cert-dir DIR               Reuse/persist signing key+chain+signed identity in DIR"
+            echo "                               (keeps servtdIdentity stable across a rebuild)"
             echo "  -h, --help                   Show this help message"
             echo
             echo "Examples:"
@@ -279,6 +298,20 @@ if [ "$FETCH_COLLATERALS" = true ]; then
     echo "  Azure region: $AZURE_REGION"
 fi
 echo
+
+# Optionally use an external (persistent) cert dir so the signing key, chain,
+# and signed servtdIdentity -- all measured into RTMR2 -- stay byte-stable
+# across a measure-then-rebind rebuild (see --tdinfo-image / --cert-dir).
+if [ -n "$CERT_DIR_OVERRIDE" ]; then
+    CERT_DIR="$CERT_DIR_OVERRIDE"
+    PRIVATE_KEY="$CERT_DIR/policy_signing_pkcs8.key"
+fi
+
+# Resolve a relative --tdinfo-image against the project root: later steps cd
+# into the temp dir, so a relative path would no longer resolve.
+if [ -n "$TDINFO_IMAGE" ] && [ "${TDINFO_IMAGE#/}" = "$TDINFO_IMAGE" ]; then
+    TDINFO_IMAGE="$PROJECT_ROOT/$TDINFO_IMAGE"
+fi
 
 # Ensure output directory exists
 mkdir -p "$OUTPUT_DIR"
@@ -485,10 +518,22 @@ echo
 echo -e "${BLUE}=== Step 4: Updating TCB Mapping Template ===${NC}"
 
 TDINFO_HASH_FILE="$TEMP_DIR/tdinfo_hash.hex"
-"$TOOLS_DIR/migtd-hash" \
-    --policy-v2 \
-    --from-report "$REPORT_DATA_FILE" \
-    --output-tdinfo-hash "$TDINFO_HASH_FILE"
+if [ -n "$TDINFO_IMAGE" ]; then
+    # Measure the ACTUAL built image (mirrors the release pipeline's
+    # measure-then-bind). servtdTcbMapping is redacted from RTMR2, so this
+    # value is independent of whatever tcb_mapping the image was built with.
+    echo "  Measuring tdinfo_hash from image: $TDINFO_IMAGE"
+    "$TOOLS_DIR/migtd-hash" \
+        --policy-v2 \
+        --manifest "$SOURCE_MATERIAL_DIR/servtd_info.json" \
+        --image "$TDINFO_IMAGE" \
+        --output-tdinfo-hash "$TDINFO_HASH_FILE"
+else
+    "$TOOLS_DIR/migtd-hash" \
+        --policy-v2 \
+        --from-report "$REPORT_DATA_FILE" \
+        --output-tdinfo-hash "$TDINFO_HASH_FILE"
+fi
 # Uppercase to match the convention used by signed policies.
 TDINFO_HASH=$(tr 'a-z' 'A-Z' < "$TDINFO_HASH_FILE")
 
@@ -514,21 +559,34 @@ echo
 # Step 5: Generate certificates and signing key
 #
 echo -e "${BLUE}=== Step 5: Generating Certificates ===${NC}"
-generate_certificates "$CERT_DIR" "P384" 365
-
-echo -e "${GREEN}✓ Certificates generated in: $CERT_DIR${NC}"
+if [ -n "$CERT_DIR_OVERRIDE" ] && [ -f "$PRIVATE_KEY" ] && [ -f "$CERT_DIR/policy_issuer_chain.pem" ]; then
+    echo -e "${YELLOW}Reusing existing certificate chain + key in: $CERT_DIR${NC}"
+else
+    generate_certificates "$CERT_DIR" "P384" 365
+    echo -e "${GREEN}✓ Certificates generated in: $CERT_DIR${NC}"
+fi
 echo
 
 #
 # Step 6: Sign td_identity.json
 #
 echo -e "${BLUE}=== Step 6: Signing TD Identity ===${NC}"
-"$TOOLS_DIR/json-signer" \
-    --sign \
-    --name "tdIdentity" \
-    --private-key "$PRIVATE_KEY" \
-    --input "$TD_IDENTITY_UPDATED" \
-    --output "$TD_IDENTITY_SIGNED"
+# ECDSA signing (ring) is randomized, so re-signing would change the
+# servtdIdentity bytes measured into RTMR2. When reusing a cert dir, reuse the
+# previously-signed identity so the measurement (tdinfo_hash) stays stable.
+REUSED_IDENTITY="$CERT_DIR/td_identity_signed.json"
+if [ -n "$CERT_DIR_OVERRIDE" ] && [ -f "$REUSED_IDENTITY" ]; then
+    echo -e "${YELLOW}Reusing previously-signed TD identity: $REUSED_IDENTITY${NC}"
+    cp "$REUSED_IDENTITY" "$TD_IDENTITY_SIGNED"
+else
+    "$TOOLS_DIR/json-signer" \
+        --sign \
+        --name "tdIdentity" \
+        --private-key "$PRIVATE_KEY" \
+        --input "$TD_IDENTITY_UPDATED" \
+        --output "$TD_IDENTITY_SIGNED"
+    [ -n "$CERT_DIR_OVERRIDE" ] && cp "$TD_IDENTITY_SIGNED" "$REUSED_IDENTITY"
+fi
 
 echo -e "${GREEN}✓ TD Identity signed: $TD_IDENTITY_SIGNED${NC}"
 echo
@@ -604,7 +662,9 @@ echo
 # Step 12: Securely delete private key
 #
 echo -e "${BLUE}=== Step 12: Cleaning Up Private Key ===${NC}"
-if [ -f "$PRIVATE_KEY" ]; then
+if [ -n "$CERT_DIR_OVERRIDE" ]; then
+    echo -e "${YELLOW}Retaining key in external cert dir for reuse: $CERT_DIR${NC}"
+elif [ -f "$PRIVATE_KEY" ]; then
     shred -u "$PRIVATE_KEY" 2>/dev/null || rm -f "$PRIVATE_KEY"
     echo -e "${GREEN}✓ Private key securely deleted${NC}"
 fi

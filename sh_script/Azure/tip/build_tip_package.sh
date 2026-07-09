@@ -70,7 +70,24 @@ for v in "${LIST[@]}"; do
   case "$v" in
     accept-all)   gen_policy --allow-all; build_image "$v" "$FEATURES"; emit accept-all;;
     reject-all)   gen_policy --reject;    build_image "$v" "$FEATURES"; emit reject-all;;
-    real)         gen_policy;             build_image "$v" "$FEATURES"; emit real;;
+    real)
+      # Two-phase (mirrors run_pipeline_locally.sh): the signed tcb_mapping must
+      # bind the ACTUAL image's tdinfo_hash, which only exists after building.
+      # Build a base image, then regenerate the policy with that measured
+      # tdinfo_hash while REUSING the same signing key/chain + signed identity
+      # (--cert-dir), so the servtdIdentity measured into RTMR2 -- and thus the
+      # tdinfo_hash -- is unchanged, and rebuild. servtdTcbMapping is redacted
+      # from RTMR2, so the rebuild measures identically to the base.
+      REAL_CERTS="$(mktemp -d)"
+      gen_policy --cert-dir "$REAL_CERTS"                 # pass 1: base policy, persist certs
+      build_image "$v" "$FEATURES"                        # base image (measured next)
+      # pass 2: reuse cached collaterals (no fetch) + same certs; bind real hash
+      # (absolute image path: the mock script cd's into its temp dir).
+      chmod +x "$MOCK"; "./$MOCK" --skip-test --cert-dir "$REAL_CERTS" --tdinfo-image "$PROJECT_ROOT/$IMG"
+      build_image "$v" "$FEATURES"                        # final image (corrected policy, same measurement)
+      emit real
+      rm -rf "$REAL_CERTS"
+      ;;
     getquote-all) gen_policy --allow-all; build_image "$v" "$FEATURES,test-get-quote"; emit getquote-all;;
     *) echo "skip unknown variant: $v" >&2;;
   esac
