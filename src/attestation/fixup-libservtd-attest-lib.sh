@@ -13,7 +13,8 @@
 ##
 ##==============================================================================
 
-targets="../../deps/linux-sgx/external/dcap_source/QuoteGeneration/quote_wrapper/servtd_attest/linux/libservtd_attest.a"
+linux_sgx_root=${LINUX_SGX_ROOT:-../../deps/linux-sgx-snap}
+targets="${linux_sgx_root}/external/dcap_source/QuoteGeneration/quote_wrapper/servtd_attest/linux/libservtd_attest.a"
 
 ##==============================================================================
 ##
@@ -21,7 +22,7 @@ targets="../../deps/linux-sgx/external/dcap_source/QuoteGeneration/quote_wrapper
 ##
 ##==============================================================================
 
-tlibc_lib=$(find ../../deps/linux-sgx -name libtlibc.a)
+tlibc_lib=$(find "${linux_sgx_root}" -name libtlibc.a)
 if [ ! -f "${tlibc_lib}" ]; then
     echo "$0: tlibc lib not found"
     exit 1;
@@ -33,7 +34,7 @@ fi
 ##
 ##==============================================================================
 
-sgxssl_lib=$(find ../../deps/linux-sgx -name libsgx_tsgxssl_crypto.a)
+sgxssl_lib=$(find "${linux_sgx_root}" -name libsgx_tsgxssl_crypto.a)
 if [ ! -f "${sgxssl_lib}" ]; then
     echo "$0: sgxssl lib not found"
     exit 1;
@@ -69,11 +70,15 @@ done
 ##
 ##==============================================================================
 
-dir=$(mktemp -d)
-src=${dir}/libservtd_attest_extras.c
-obj=${dir}/libservtd_attest_extras.o
+work_dir=../../target/libservtd-attest-fixup
+rm -rf "${work_dir}"
+mkdir -p "${work_dir}"
+trap 'rm -rf "${work_dir}"' EXIT
 
-cat > ${src} <<END
+src=${work_dir}/libservtd_attest_extras.c
+obj=${work_dir}/libservtd_attest_extras.o
+
+cat > "${src}" <<END
 #include <stddef.h>
 
 int* __errno()
@@ -86,7 +91,7 @@ void* heap_base;
 size_t heap_size;
 END
 
-gcc -c ${src} -o ${obj}
+gcc -c "${src}" -o "${obj}"
 if [ "$?" != "0" ]; then
     echo "$0: compile failed: ${src}"
     exit 1;

@@ -20,8 +20,9 @@ WORKDIR /root
 # Install all build dependencies in one layer.
 # - clang/llvm/nasm : compile and assemble the `ring` crypto crate
 # - ocaml/ocamlbuild/automake/autoconf/libtool/cmake/perl/make/libssl-dev :
-#   build the SGX/DCAP attestation library (deps/linux-sgx) pulled in by the
-#   `igvm-attest` build (attestation/build.rs only skips it under feature "test")
+#   build the SGX/DCAP attestation library (deps/linux-sgx-snap) pulled in by
+#   the `igvm-attest` build (attestation/build.rs only skips it under
+#   feature "test")
 # - git : required by sh_script/preparation.sh to (re)patch the `ring` submodule
 # DEBIAN_FRONTEND is set for tzdata.
 RUN apt-get update && \

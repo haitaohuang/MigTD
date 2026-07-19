@@ -24,7 +24,7 @@ fn main() {
 
     let crate_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lib_path = crate_path
-        .join("../../deps/linux-sgx")
+        .join("../../deps/linux-sgx-snap")
         .display()
         .to_string();
 
@@ -59,6 +59,7 @@ fn main() {
         let script_path = crate_path.join("fixup-libservtd-attest-lib.sh");
         let status = Command::new("bash")
             .arg(&script_path)
+            .env("LINUX_SGX_ROOT", &lib_path)
             .current_dir(&crate_path)
             .status()
             .expect("failed to run fixup-libservtd-attest-lib.sh script!");

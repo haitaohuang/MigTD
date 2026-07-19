@@ -14,8 +14,9 @@
 # rather than the host runner's toolchain.
 #
 # It is heavy (a docker image build plus two full IGVM builds, each including
-# the linux-sgx/OCaml attestation library and an LTO `cargo image`), so it runs
-# weekly, on manual dispatch, and on PRs that touch inputs affecting the build.
+# the vendored linux-sgx-snap/OCaml attestation library and an LTO
+# `cargo image`), so it runs weekly, on manual dispatch, and on PRs that touch
+# inputs affecting the build.
 name: reproducible-igvm
 
 on:
