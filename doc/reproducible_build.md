@@ -152,3 +152,82 @@ and verify MRTD without replicating the exact `/root/MigTD` path, on any
 machine/CI checkout dir; and to drop the hard dependency on the container. Only
 #1 is needed for that — the rest is hardening.
 
+## Public policy-only enrollment artifact
+
+The public Docker/Make build intentionally produces an **enrollment artifact**,
+not a deployable MigTD:
+
+```bash
+make -C sh_script/Azure build-igvm
+```
+
+This target deterministically derives
+`target/release/migtd.policy_v2.json` from the public
+`config/templates/policy_v2.json` source:
+
+```bash
+jq -c 'del(.servtdCollateral) | {policyData:.}' \
+  config/templates/policy_v2.json
+```
+
+The resulting policy has no outer signature and no private
+`servtdCollateral`. The image is built with
+`cargo image --non-bootable-enrollment-artifact`, which enrolls that policy but
+rejects issuer-chain, signer-anchor, and CoRIM inputs. The public artifact
+therefore contains:
+
+- deterministic MigTD code with `servtd_corim` support;
+- the raw unsigned policy bytes;
+- **no** root CA;
+- **no** policy issuer chain;
+- **no** signer anchor; and
+- **no** signed TCB-mapping CoRIM.
+
+With no RTMR1 signer-anchor source, firmware policy initialization fails closed.
+The image is explicitly non-bootable until private enrollment. The CFV contents
+are outside MRTD, although the CFV GPA/layout still participates in TD metadata
+construction.
+
+`docker_build_igvm.sh` publishes the exact policy as
+`migtd.policy_v2.json` beside `migtd.igvm`. Consumers must preserve this
+sidecar: `td-shim-enroll` rebuilds the complete CFV, so each enrollment pass
+must resupply these byte-identical policy bytes rather than assuming the prior
+CFV entry survives.
+
+### Private enrollment transition
+
+The downstream release flow must use this sequence:
+
+1. Re-enroll the exact policy sidecar plus the production signer anchor.
+   This intentionally changes RTMR1 and `tdinfo_hash` relative to the
+   zero-anchor base.
+2. Compute the anchored image's production `tdinfo_hash` and sign the
+   TCB-mapping CoRIM.
+3. Re-enroll the exact same policy and anchor plus the signed CoRIM.
+4. Verify the anchor-stage and final images have identical MRTD and RTMR0-3.
+   Only the CoRIM is wholly outside the runtime measurement model.
+
+Do not describe anchor enrollment as unmeasured: changing the anchor changes
+RTMR1. The measurement-invariant transition begins only after the production
+anchor is staged.
+
+Inspect or extract the public artifact with:
+
+```bash
+cargo run -p migtd-hash -- \
+  --image target/release/migtd.igvm \
+  --verify-policy-only-enrollment-artifact \
+  --extract-policy target/release/extracted-policy.json
+cmp target/release/migtd.policy_v2.json \
+    target/release/extracted-policy.json
+```
+
+The verifier fails if a root CA, issuer chain, signer anchor, signed CoRIM,
+outer policy signature, or `servtdCollateral` is present.
+
+### Local CoRIM generator scope
+
+`tools/servtd-corim-generator` is restricted to EMU, tests, and local
+development. It signs with locally generated ephemeral keys for
+`build_AzCVMEmu_policy_and_test.sh --corim-only`. Public Docker/Make targets
+never invoke it, generate keys, or sign production artifacts.

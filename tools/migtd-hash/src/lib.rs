@@ -17,7 +17,7 @@ use td_shim_tools::tee_info_hash::{Manifest, TdInfoStruct};
 mod migtd_consts;
 use migtd_consts::{
     CONFIG_VOLUME_SIZE, MIGTD_POLICY_FFS_GUID, MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID,
-    MIGTD_ROOT_CA_FFS_GUID, MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID,
+    MIGTD_ROOT_CA_FFS_GUID, MIGTD_SERVTD_CORIM_FFS_GUID, MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID,
     TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
 };
 
@@ -77,13 +77,7 @@ pub fn build_td_info_unmasked(
     }
     td_info.build_rtmr_with_seperator(0);
 
-    let mut cfv = vec![0u8; CONFIG_VOLUME_SIZE];
-    image.seek(SeekFrom::Start(0))?;
-    if igvmformat {
-        cfv = td_info.read_igvmcfvdata(&mut image);
-    } else {
-        image.read(&mut cfv)?;
-    }
+    let cfv = read_config_volume(&mut image, igvmformat)?;
 
     let rtmr1 = rtmr1(&cfv, &td_info.rtmr1, is_policy_v2)?;
     td_info.rtmr1.copy_from_slice(rtmr1.as_slice());
@@ -92,6 +86,74 @@ pub fn build_td_info_unmasked(
         .copy_from_slice(rtmr2(&cfv, is_ra_disabled, is_policy_v2)?.as_slice());
 
     Ok(td_info)
+}
+
+fn read_config_volume(image: &mut File, igvmformat: bool) -> Result<Vec<u8>, Error> {
+    image.seek(SeekFrom::Start(0))?;
+    if igvmformat {
+        Ok(TdInfoStruct::default().read_igvmcfvdata(image))
+    } else {
+        let mut cfv = vec![0u8; CONFIG_VOLUME_SIZE];
+        image.read(&mut cfv)?;
+        Ok(cfv)
+    }
+}
+
+/// Verify that an image is a policy-only enrollment artifact and return the
+/// exact policy bytes enrolled in its CFV.
+///
+/// Such an artifact must contain a raw unsigned `policyData` wrapper and no
+/// issuer chain, signer anchor, or signed TCB-mapping CoRIM. It is intentionally
+/// non-bootable until a private enrollment step rebuilds the CFV.
+pub fn verify_policy_only_enrollment_artifact(
+    mut image: File,
+    igvmformat: bool,
+) -> Result<Vec<u8>, Error> {
+    let cfv = read_config_volume(&mut image, igvmformat)?;
+    let policy = fv::get_file_from_fv(&cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_POLICY_FFS_GUID)
+        .ok_or_else(|| anyhow!("enrollment artifact contains no migration policy"))?;
+
+    for (name, guid) in forbidden_policy_only_slots() {
+        if fv::get_file_from_fv(&cfv, pi::fv::FV_FILETYPE_RAW, guid).is_some() {
+            return Err(anyhow!(
+                "policy-only enrollment artifact unexpectedly contains {name}"
+            ));
+        }
+    }
+
+    validate_policy_only(policy)?;
+    Ok(policy.to_vec())
+}
+
+fn forbidden_policy_only_slots() -> [(&'static str, r_efi::efi::Guid); 4] {
+    [
+        ("root CA", MIGTD_ROOT_CA_FFS_GUID),
+        ("policy issuer chain", MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID),
+        ("signer anchor", MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID),
+        ("signed ServTD CoRIM", MIGTD_SERVTD_CORIM_FFS_GUID),
+    ]
+}
+
+fn validate_policy_only(policy: &[u8]) -> Result<(), Error> {
+    let document: Value = serde_json::from_slice(policy)
+        .map_err(|e| anyhow!("invalid enrollment policy JSON: {e}"))?;
+    let object = document
+        .as_object()
+        .ok_or_else(|| anyhow!("enrollment policy must be a JSON object"))?;
+    if object.len() != 1 || !object.contains_key("policyData") {
+        return Err(anyhow!(
+            "enrollment policy must contain only the unsigned policyData wrapper"
+        ));
+    }
+    let policy_data = object["policyData"]
+        .as_object()
+        .ok_or_else(|| anyhow!("enrollment policy policyData must be a JSON object"))?;
+    if policy_data.contains_key("servtdCollateral") {
+        return Err(anyhow!(
+            "enrollment policy must not contain servtdCollateral"
+        ));
+    }
+    Ok(())
 }
 
 /// Field-by-field clone of a [`TdInfoStruct`] (which does not derive [`Clone`]).
@@ -434,9 +496,10 @@ fn calculate_digest(data: &[u8]) -> Result<Vec<u8>, Error> {
 mod tests {
     use super::migtd_consts::{
         CONFIG_VOLUME_SIZE, MIGTD_POLICY_FFS_GUID, MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID,
-        MIGTD_ROOT_CA_FFS_GUID, TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
+        MIGTD_ROOT_CA_FFS_GUID, MIGTD_SERVTD_CORIM_FFS_GUID, MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID,
+        TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
     };
-    use super::update_tcb_mapping_v2;
+    use super::{forbidden_policy_only_slots, update_tcb_mapping_v2, validate_policy_only};
     use r_efi::efi::Guid;
     use serde_json::Value;
     use td_layout::build_time::TD_SHIM_CONFIG_SIZE;
@@ -495,6 +558,60 @@ mod tests {
         assert_eq!(
             MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID.as_bytes(),
             expected.as_bytes()
+        );
+    }
+
+    #[test]
+    fn migtd_signer_anchor_ffs_guid_matches_upstream() {
+        let expected = Guid::from_fields(
+            0x2B9D5A84,
+            0x6F3C,
+            0x4E71,
+            0x8A,
+            0x2D,
+            &[0x0C, 0x7E, 0x1F, 0x4B, 0x6A, 0x93],
+        );
+        assert_eq!(
+            MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID.as_bytes(),
+            expected.as_bytes()
+        );
+    }
+
+    #[test]
+    fn migtd_servtd_corim_ffs_guid_matches_upstream() {
+        let expected = Guid::from_fields(
+            0x7E5B9C11,
+            0x2D4A,
+            0x4F6E,
+            0x9B,
+            0x3C,
+            &[0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F],
+        );
+        assert_eq!(MIGTD_SERVTD_CORIM_FFS_GUID.as_bytes(), expected.as_bytes());
+    }
+
+    #[test]
+    fn policy_only_schema_rejects_signature_and_servtd_collateral() {
+        assert!(validate_policy_only(br#"{"policyData":{"id":"test"}}"#).is_ok());
+        assert!(
+            validate_policy_only(br#"{"policyData":{"id":"test"},"signature":"deadbeef"}"#)
+                .is_err()
+        );
+        assert!(
+            validate_policy_only(br#"{"policyData":{"id":"test","servtdCollateral":{}}}"#).is_err()
+        );
+    }
+
+    #[test]
+    fn policy_only_artifact_forbids_all_non_policy_trust_inputs() {
+        assert_eq!(
+            forbidden_policy_only_slots().map(|(name, _)| name),
+            [
+                "root CA",
+                "policy issuer chain",
+                "signer anchor",
+                "signed ServTD CoRIM"
+            ]
         );
     }
 

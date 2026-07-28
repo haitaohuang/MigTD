@@ -10,7 +10,7 @@
 #
 # Two source modes:
 #   local (default) : your current working tree (minus target/ and .git) is
-#                     copied in and built with `make build-igvm generate-hash-v2`.
+#                     copied in and built with `make build-igvm`.
 #                     The tree must already be prepared (submodules initialised
 #                     and sh_script/preparation.sh applied) -- it normally is if
 #                     you have built MigTD before. If not, use --clone.
@@ -82,7 +82,7 @@ command -v docker >/dev/null 2>&1 || { err "docker is not installed or not on PA
 
 # Default Makefile target depends on the source mode.
 if [ -z "$TARGET" ]; then
-    if [ "$MODE" = "clone" ]; then TARGET="build-igvm-all"; else TARGET="build-igvm generate-hash-v2"; fi
+    if [ "$MODE" = "clone" ]; then TARGET="build-igvm-all"; else TARGET="build-igvm"; fi
 fi
 
 # Sanity check for local mode: the tree must be prepared.
@@ -106,7 +106,7 @@ else
 fi
 
 # 2) Generate the in-container build script for the chosen mode.
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "$OUTPUT/.docker-build-work.XXXXXX")"
 cleanup() {
     if [ -n "${CID-}" ]; then docker rm -f "$CID" >/dev/null 2>&1 || true; fi
     rm -rf "$WORK"
@@ -167,7 +167,12 @@ fi
 info "Extracting artifacts to $OUTPUT"
 docker cp "$CID:/root/MigTD/target/release/migtd.igvm" "$OUTPUT/migtd.igvm"
 ( cd "$OUTPUT" && sha256sum migtd.igvm | tee migtd.igvm.sha256 )
-# The MRTD/RTMR measurements are emitted by `generate-hash` into the build log.
+if docker cp "$CID:/root/MigTD/target/release/migtd.policy_v2.json" \
+    "$OUTPUT/migtd.policy_v2.json" 2>/dev/null; then
+    ( cd "$OUTPUT" && sha256sum migtd.policy_v2.json | tee migtd.policy_v2.json.sha256 )
+fi
+# Fully enrolled test targets may emit measurements. The default policy-only
+# artifact has no valid RTMR1/tdinfo_hash until private anchor enrollment.
 grep -iE 'MR_TD|MRTD|RTMR|measurement|servtd|SHA384|hash' "$OUTPUT/build.log" \
     > "$OUTPUT/migtd.igvm.measurements.txt" 2>/dev/null || true
 

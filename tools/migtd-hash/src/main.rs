@@ -8,7 +8,7 @@ use log::debug;
 use migtd_hash::{
     apply_servtd_attr_masks, build_td_info_unmasked, calculate_servtd_hash,
     calculate_servtd_info_hash, calculate_tdinfo_hash, clone_td_info, update_tcb_mapping_v2,
-    SERVTD_TYPE_MIGTD,
+    verify_policy_only_enrollment_artifact, SERVTD_TYPE_MIGTD,
 };
 use serde_json::{json, Value};
 use std::{
@@ -166,6 +166,31 @@ struct Config {
     /// exclusive with `--from-report`.
     #[clap(short, long)]
     pub image: Option<String>,
+    /// Verify that `--image` is a policy-only, zero-anchor, zero-CoRIM
+    /// enrollment artifact. This mode does not calculate TD measurements
+    /// because the image is intentionally non-bootable until private
+    /// enrollment supplies the production signer anchor.
+    #[clap(
+        long,
+        requires = "image",
+        conflicts_with_all = [
+            "manifest",
+            "from_report",
+            "output_file",
+            "json",
+            "policy_v2",
+            "servtd_attr",
+            "calc_servtd_hash",
+            "output_td_info",
+            "output_tdinfo_hash",
+            "update_tcb_mapping"
+        ]
+    )]
+    pub verify_policy_only_enrollment_artifact: bool,
+    /// Extract the exact CFV policy bytes while verifying a policy-only
+    /// enrollment artifact.
+    #[clap(long, requires = "verify_policy_only_enrollment_artifact")]
+    pub extract_policy: Option<PathBuf>,
     /// Path of a `migtd_report_data.json` produced by `azcvm-extract-report`
     /// (camelCase fields: mrtd, rtmr0..3, attributes, xfam, mrConfigId,
     /// mrOwner, mrOwnerConfig — all hex). When set, the TDINFO_STRUCT is
@@ -238,6 +263,42 @@ fn main() {
     }
 
     debug!("Starting migtd-hash tool");
+
+    if config.verify_policy_only_enrollment_artifact {
+        let image_path = config
+            .image
+            .as_deref()
+            .expect("--image is required by clap");
+        let igvmformat = if image_path.ends_with(".igvm") {
+            true
+        } else if image_path.ends_with(".bin") {
+            false
+        } else {
+            eprintln!("--image must end in .igvm or .bin");
+            exit(1);
+        };
+        let image = File::open(image_path).unwrap_or_else(|e| {
+            eprintln!("Failed to open MigTD image: {}", e);
+            exit(1);
+        });
+        let policy =
+            verify_policy_only_enrollment_artifact(image, igvmformat).unwrap_or_else(|e| {
+                eprintln!("Enrollment artifact verification failed: {e}");
+                exit(1);
+            });
+        if let Some(output) = &config.extract_policy {
+            fs::write(output, &policy).unwrap_or_else(|e| {
+                eprintln!("Failed to write extracted policy {}: {e}", output.display());
+                exit(1);
+            });
+            println!("Extracted policy: {}", output.display());
+        }
+        println!(
+            "Verified non-bootable policy-only enrollment artifact: policy={} bytes, root-ca=absent, issuer-chain=absent, signer-anchor=absent, servtd-corim=absent",
+            policy.len()
+        );
+        return;
+    }
 
     let servtd_attr = config.servtd_attr.unwrap_or(0);
     debug!("ServTD attributes: {:#x}", servtd_attr);
