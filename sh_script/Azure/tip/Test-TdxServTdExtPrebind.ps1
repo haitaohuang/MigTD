@@ -1,5 +1,3 @@
-#Requires -Version 7.0
-
 <#
 .SYNOPSIS
   Start a prebound TDX VM and validate its runtime ServTdExt layout.
@@ -19,12 +17,15 @@
 param(
     [Parameter(Mandatory)] [string]$IgvmFilePath,
     [string]$HashFilePath = "$IgvmFilePath.hash",
+    [string]$HashEvidencePath,
+    [string]$CandidateVmgsPath,
     [string]$MigTdId = 'tipmigtd',
     [string]$VmName = 'tiptd',
     [string]$PowerTestPath = "$env:ProgramFiles\PowerShell\Modules\PowerTest",
     [switch]$NoPersistentSecrets,
     [switch]$CaptureSerial,
-    [ValidateRange(0, 60)] [int]$SerialDrainTimeoutSeconds = 30
+    [ValidateRange(0, 60)] [int]$SerialDrainTimeoutSeconds = 30,
+    [switch]$SkipHashEvidenceValidation
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,6 +37,8 @@ if (-not (Test-Path $driver)) {
 $parameters = @{
     IgvmFilePath = $IgvmFilePath
     HashFilePath = $HashFilePath
+    HashEvidencePath = $HashEvidencePath
+    CandidateVmgsPath = $CandidateVmgsPath
     MigTdId = $MigTdId
     VmName = $VmName
     PowerTestPath = $PowerTestPath
@@ -43,6 +46,7 @@ $parameters = @{
     NoPersistentSecrets = $NoPersistentSecrets
     CaptureSerial = $CaptureSerial
     SerialDrainTimeoutSeconds = $SerialDrainTimeoutSeconds
+    SkipHashEvidenceValidation = $SkipHashEvidenceValidation
 }
 
 & $driver @parameters

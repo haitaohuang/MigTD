@@ -34,8 +34,9 @@ layer that exercises the real no_std firmware image end-to-end without Azure.
 ## 2. Azure TiP (real TDX hardware, loopback live migration)
 
 Canonical source: [doc/integration_test_azure_tip.md](../../doc/integration_test_azure_tip.md).
-**Status: Draft design**, not yet wired into CI (self-hosted TDX agent still
-to be provisioned).
+**Status: Draft Azure DevOps → CloudVault → Cirrus design**. Acceptance runs
+on the Cirrus-managed physical Windows TDX host through Hyper-V/HCS, not inside
+the ARM guest; the GitHub self-hosted workflow is intentionally excluded.
 
 - Build host (Linux): Rust 1.88.0 + `rust-src` + `x86_64-unknown-none`,
   private `ms-crates-io` feed access, `./sh_script/preparation.sh`.
@@ -74,6 +75,20 @@ to be provisioned).
   getquote-all, mock-quote/no-agent smoke test, ServTdExt prebind layout,
   rebind (same or different image through `Test-TdxLmRebind.ps1`), cycle
   (repeat N×).
+- Release acceptance runs exactly candidate loopback, same-image rebind, and
+  `getTDreport`. The parent package supplies the AP-signed IGVM, sibling hash
+  evidence, release `migtd.vmgs`, and compatible SVM API `cli.exe`:
+  ```powershell
+  .\Invoke-TipHarness.ps1 -Mode Run -Suite ReleaseDeep `
+      -IgvmPath .\candidate.igvm `
+      -HashEvidencePath .\candidate.igvm.hash.evidence.json `
+      -CandidateVmgsPath .\migtd.vmgs `
+      -SvmApiCliPath C:\path\to\cli.exe `
+      -ResultsPath .\results.json
+  ```
+  Each case uses an isolated copy of the candidate VMGS; the packaged source is
+  hash-checked before/after and never mutated. `getTDreport` uses a random
+  64-byte REPORTDATA value and requires CLI `-parse` verification.
 - All TiP VM tests keep host migration policy `DisabledByDefault` and explicitly
   opt each test TD in with `EnabledIfHostPermits` before assigning its MigTD
   migration-policy hash.

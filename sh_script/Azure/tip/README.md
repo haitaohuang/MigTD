@@ -60,22 +60,24 @@ Produces in `out/tip-package/`:
 
 | File | Role |
 |------|------|
-| `test-migtd-accept-all.igvm` + `.hash` | allow-all policy → migration succeeds |
-| `test-migtd-reject-all.igvm` + `.hash` | bad-FMSPC policy → migration rejected |
-| `test-migtd.igvm` + `.hash` | `config/Azure/policy_data_raw.json` → succeeds if node FMSPC/TCB match |
-| `test-migtd_rebind.igvm` + `.hash` | same real policy and signer with `policySvn` incremented by one |
-| `test-migtd_key_rotation.igvm` + `.hash` | same real policy SVN/root/leaf Subject Name, signed by a new policy leaf key |
-| `test-migtd-getquote-all.igvm` + `.hash` | GetQuote init image |
-| `test-migtd-accept-all_mock_quote.igvm` + `.hash` | allow-all policy with built-in mock quote |
-| `test-migtd-reject-all_mock_quote.igvm` + `.hash` | reject policy with built-in mock quote |
-| `test-migtd_mock_quote.igvm` + `.hash` | policy generated from mock measurements with built-in mock quote |
-| `test-migtd_mock_quote_rebind.igvm` + `.hash` | same mock-quote real policy and signer with `policySvn` incremented by one |
-| `test-migtd_mock_quote_key_rotation.igvm` + `.hash` | mock-quote counterpart signed by the rotated policy leaf key |
+| `test-migtd-accept-all.igvm` + `.hash` + `.hash.evidence.json` | allow-all policy → migration succeeds |
+| `test-migtd-reject-all.igvm` + `.hash` + `.hash.evidence.json` | bad-FMSPC policy → migration rejected |
+| `test-migtd.igvm` + `.hash` + `.hash.evidence.json` | `config/Azure/policy_data_raw.json` → succeeds if node FMSPC/TCB match |
+| `test-migtd_rebind.igvm` + `.hash` + `.hash.evidence.json` | same real policy and signer with `policySvn` incremented by one |
+| `test-migtd_key_rotation.igvm` + `.hash` + `.hash.evidence.json` | same real policy SVN/root/leaf Subject Name, signed by a new policy leaf key |
+| `test-migtd-getquote-all.igvm` + `.hash` + `.hash.evidence.json` | GetQuote init image |
+| `test-migtd-accept-all_mock_quote.igvm` + `.hash` + `.hash.evidence.json` | allow-all policy with built-in mock quote |
+| `test-migtd-reject-all_mock_quote.igvm` + `.hash` + `.hash.evidence.json` | reject policy with built-in mock quote |
+| `test-migtd_mock_quote.igvm` + `.hash` + `.hash.evidence.json` | policy generated from mock measurements with built-in mock quote |
+| `test-migtd_mock_quote_rebind.igvm` + `.hash` + `.hash.evidence.json` | same mock-quote real policy and signer with `policySvn` incremented by one |
+| `test-migtd_mock_quote_key_rotation.igvm` + `.hash` + `.hash.evidence.json` | mock-quote counterpart signed by the rotated policy leaf key |
 | `test-migtd{,_rebind,_key_rotation,_mock_quote,_mock_quote_rebind,_mock_quote_key_rotation}.policy.json` | signed policy snapshot embedded in the corresponding image |
-| `Invoke-TdxLmLoopback.ps1`, `Run-TipTests.ps1` | migration test scripts |
+| `Invoke-TipHarness.ps1`, `Run-TipTests.ps1`, `TipHarness.Common.ps1` | CI/release harness, compatibility wrapper, and shared helpers |
+| `Invoke-TdxLmLoopback.ps1` | migration loopback case executor (success or expected rejection) |
 | `Test-TdxMigTdStartupRequests.ps1` | validate startup `EnableLogArea` plus an external post-start `GetTDReport` health-check query; optionally validate GetQuote |
 | `Test-TdxServTdExtPrebind.ps1` | start a prebound TD and validate both ServTdExt hash slots and zero padding |
 | `Test-TdxLmRebind.ps1` | rebind a running TD between two same- or different-image MigTD instances |
+| `Test-TdxGetTdReport.ps1` | request and verify TDREPORT structure hashes and a random REPORTDATA nonce echo through the SVM API CLI |
 | `Publish-TipPackage.ps1` | enrich the source package with matching winbuild prebuilts and copy it to a destination |
 | `Install-TipDependencies.ps1` | install bundled PowerTest, HCSTest v2, VmgsTool, and optional test SecFw |
 | `troubleshooting/Export-MigTdMigrationTimeline.ps1` | normalize VMMS/Worker/VID/GHCI events from one ETL |
@@ -90,6 +92,10 @@ Produces in `out/tip-package/`:
 `.hash` is the direct `SERVTD_INFO_HASH` the host passes to
 `TDH.SERVTD.PREBIND` as `MigTdHash`. Built with MigTD-native tooling only
 (`cargo image`, `migtd-hash`, `build_azure_mock_test.sh`).
+
+`.hash.evidence.json` binds each `.igvm` file's SHA-256 to its sibling MigTD
+hash. On the TiP blade, the harness verifies this evidence before any MigTD
+load. Missing or mismatched evidence is a hard failure.
 
 The `_mock_quote` variants use the `use-mock-quote` feature and do not use the
 host IGVMAgent GetQuote path. Their sibling `.hash` files are still direct
@@ -222,6 +228,57 @@ the same HCS path used by IGVMAgent health checks. With `-IncludeAgentCases`,
 the test also starts `test-migtd-getquote-all.igvm` and requires Worker
 Analytic event 18670, matching `Tdx.Ghci.GetQuote.TestMD.Tests.ps1`.
 
+For deterministic CI/release automation, use the explicit harness modes.
+`ReleaseDeep` and its case scripts also support elevated Windows PowerShell
+5.1, which is used by the parent Cirrus pipeline:
+
+```powershell
+# Explicit harness modes for CI/release automation.
+.\Invoke-TipHarness.ps1 -Mode Zip -PackageDir . -ArchivePath .\tip-package.zip
+.\Invoke-TipHarness.ps1 -Mode Unzip -ArchivePath .\tip-package.zip -ExpandDir .\tip-package
+
+# Fast PR suite: mock-quote migration + ServTdExt prebind.
+.\Invoke-TipHarness.ps1 -Mode Run -Suite PrFast -PackageDir .\tip-package
+
+# Deep release suite on the physical host: loopback, same-image rebind,
+# and getTDreport against the exact candidate IGVM and release VMGS.
+.\Invoke-TipHarness.ps1 `
+    -Mode Run `
+    -Suite ReleaseDeep `
+    -IgvmPath .\candidate.igvm `
+    -HashEvidencePath .\candidate.igvm.hash.evidence.json `
+    -CandidateVmgsPath .\migtd.vmgs `
+    -SvmApiCliPath C:\path\to\cli.exe `
+    -ResultsPath .\results.json
+```
+
+Run mode writes deterministic `test-results\results.json`, captures serial logs
+under `test-results\serial\`, and fails with a non-zero exit for test failures,
+transport/precondition errors, cleanup failures, or missing evidence.
+
+`ReleaseDeep` runs exactly three physical-host cases, in order: candidate
+loopback migration, same-image rebind, and `getTDreport`. The sibling hash file
+defaults to `<IgvmPath>.hash`; `-HashEvidencePath` may identify its evidence
+file explicitly. `Test-TdxGetTdReport.ps1` invokes:
+
+```text
+cli.exe vm getmigtdreport -name <MigTdId> -reportdata <128 hex chars> -timeoutms <ms> -parse
+```
+
+The harness generates the 64-byte REPORTDATA value with the platform
+cryptographic RNG and requires CLI exit code zero plus both structure-hash and
+nonce-echo verification. Its JSON evidence contains the nonce, report length,
+report SHA-256, completion status, and verification results, but not the full
+TDREPORT blob. Pass `-SvmApiCliPath` explicitly for packaged automation. If it
+is omitted, only unambiguous installed command/path locations are checked; a
+missing CLI is a hard precondition failure.
+
+For every release case, `-CandidateVmgsPath` is validated as non-empty and
+copied to that case's isolated `guest-state` directory before the MigTD HCS VM
+is created. Same-image rebind gets two independent copies. Copy length/hash
+and source preservation are recorded as evidence, the packaged source is never
+opened for write, and per-case cleanup removes only the copies.
+
 Each case: start MigTD → register hash with host policy `DisabledByDefault` →
 create a TDX VM → set its migratable policy to `EnabledIfHostPermits` → assign
 its MigTD hash → `Move-VM -DestinationHost localhost` → assert → cleanup while
@@ -338,15 +395,17 @@ and `test-migtd_key_rotation.igvm`.
 
 Runtime `TD Info Hash` values parsed from the two serial logs are authoritative,
 so sibling `.hash` files may be stale or absent. Existing `.hash` files are
-used only as cross-checks and as fallbacks when serial capture is disabled.
+used only as cross-checks when serial capture is enabled (runtime-vs-sibling
+mismatch is fail-closed). When serial capture is disabled, the scripts rely on
+verified sibling hash evidence and do not claim runtime reconciliation.
 When the two runtime hashes are equal, the second host mapping uses a synthetic
 key exactly as the host OS rebind test does; `Get-VmMigrationPolicy` must still
 report the real IGVM hash. The target VM defaults to `NoPersistentSecrets`; pass
 `-UsePersistentSecrets` only when target-VM attestation is intentionally part
 of the test. Both MigTD serial logs are captured by default as
 `tipmigtd-rebind-{old,new}.serial.log`; disable this with
-`-CaptureSerial:$false`. The script warns when a sibling hash disagrees with
-the runtime value and waits up to 30 seconds for
+`-CaptureSerial:$false`. The script fails if it cannot observe a runtime hash
+in captured serial evidence within the timeout, and waits up to 30 seconds for
 `ReportStatus for rebinding completed` before stopping either MigTD. If neither
 side receives operation 2 within five seconds, it reports a pre-delivery host
 failure instead. Override the timeout with `-SerialDrainTimeoutSeconds`.

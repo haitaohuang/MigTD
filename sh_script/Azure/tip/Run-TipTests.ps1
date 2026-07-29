@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-  Run the TiP loopback test suite over a built package directory.
+  Backward-compatible entrypoint for TiP hardware test suites.
 
 .DESCRIPTION
   Runs MigTD startup and post-start WaitForRequest coverage,
@@ -10,6 +10,9 @@
   policy leaf-key rotation rebind checks.
   Optionally installs bundled dependencies, configures the host, and runs the
   regular IGVMAgent-dependent policy cases.
+  When -Suite is specified, delegates to Invoke-TipHarness.ps1 for the
+  deterministic PrFast or ReleaseDeep CI/release contract. -IncludeAgentCases
+  retains its legacy meaning and extends the default suite.
 
 .EXAMPLE
   .\Run-TipTests.ps1 -InstallDependencies -ConfigureHost
@@ -21,9 +24,48 @@ param(
     [switch]$InstallDependencies,
     [switch]$ConfigureHost,
     [switch]$IncludeAgentCases,
-    [switch]$CaptureSerial
+    [switch]$CaptureSerial,
+    [string]$ResultsPath,
+    [string]$EvidenceDir,
+    [switch]$SkipHashEvidenceValidation,
+    [string]$IgvmPath,
+    [string]$HashFilePath,
+    [string]$HashEvidencePath,
+    [string]$CandidateVmgsPath,
+    [string]$SvmApiCliPath,
+    [ValidateSet('PrFast', 'ReleaseDeep')]
+    [string]$Suite
 )
+
 $ErrorActionPreference = 'Stop'
+$harness = Join-Path $PSScriptRoot 'Invoke-TipHarness.ps1'
+if (-not (Test-Path $harness)) {
+    throw "Harness wrapper not found: $harness"
+}
+
+if ($PSBoundParameters.ContainsKey('Suite')) {
+    $harnessCaptureSerial = if ($PSBoundParameters.ContainsKey('CaptureSerial')) {
+        $CaptureSerial.IsPresent
+    } else {
+        $true
+    }
+    & $harness -Mode Run `
+        -PackageDir $PackageDir `
+        -Suite $Suite `
+        -PowerTestPath $PowerTestPath `
+        -InstallDependencies:$InstallDependencies `
+        -ConfigureHost:$ConfigureHost `
+        -CaptureSerial:$harnessCaptureSerial `
+        -ResultsPath $ResultsPath `
+        -EvidenceDir $EvidenceDir `
+        -IgvmPath $IgvmPath `
+        -HashFilePath $HashFilePath `
+        -HashEvidencePath $HashEvidencePath `
+        -CandidateVmgsPath $CandidateVmgsPath `
+        -SvmApiCliPath $SvmApiCliPath `
+        -SkipHashEvidenceValidation:$SkipHashEvidenceValidation
+    return
+}
 
 if ($InstallDependencies) {
     $installer = Join-Path $PackageDir 'Install-TipDependencies.ps1'

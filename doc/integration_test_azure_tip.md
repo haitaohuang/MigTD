@@ -1,14 +1,15 @@
 # Azure MigTD Integration Test (TiP) — Design
 
-Status: Draft · Scope: per-PR validation of MigTD changes on real Azure TDX
-hardware. Self-contained: built and tested with MigTD-native tooling only.
+Status: Draft · Scope: release-candidate validation on a Cirrus-managed
+physical Windows TDX host. Tests execute through Hyper-V/HCS on the host, not
+inside the ARM guest.
 
 ## 1. Goal
 
-Gate every MigTD change with a real source⇄destination TD **live migration** on a
-TDX host. Build the MigTD IGVM and its measurement hash with MigTD tooling, then
-drive a loopback migration through the host's HCS/VMM interfaces and assert the
-outcome (accept, reject, real-policy, rebind).
+Validate the exact release candidate with three physical-host acceptance cases:
+loopback live migration, same-image rebind, and `getTDreport`. Azure DevOps
+stages the AP-signed IGVM, sibling hash/evidence, and release `migtd.vmgs` in
+CloudVault; Cirrus places those bytes and the TiP harness on the Windows host.
 
 The images built here use the same names the **Azure OS PR gate** consumes
 prebuilt from the `TDX_LM_IGVM_Binaries` vpack
@@ -42,7 +43,12 @@ and its hash, not a signed release.
   `Enable-LoopbackMigration` (one-time `Initialize-TdxLmMachine`).
 - PowerShell modules available: **PowerTest** (`TdxLiveMigrationUtilities.psm1`),
   **Hyper-V**, **HCSTest** (v2).
-- **Elevated PowerShell 7**; free disk for the TD's VMGS/VHD.
+- The matching SVM API CLI (`cli.exe`) supporting
+  `vm getmigtdreport -name <id> -reportdata <128 hex chars> -timeoutms <ms>
+  -parse`.
+- **Elevated PowerShell 7** for the full manual suite. The deterministic
+  `ReleaseDeep` harness path also supports elevated Windows PowerShell 5.1.
+- Free disk for the TD's VMGS/VHD.
 
 ## 3. Build & policy (MigTD-native)
 
@@ -101,6 +107,8 @@ signed with a local test key by `build_azure_mock_test.sh`.
 | `Test-TdxMigTdStartupRequests.ps1` | validate startup `EnableLogArea` and an explicit post-start `GetTDReport` health-check query through HCS and GHCI VDev ETW; optionally validate GetQuote |
 | `Test-TdxServTdExtPrebind.ps1` | validates both prebound ServTdExt hash slots and reserved zero ranges after target startup |
 | `Test-TdxLmRebind.ps1` | rebinds a running TD between two same- or different-image MigTD instances |
+| `Test-TdxGetTdReport.ps1` | verifies TDREPORT structure hashes and a random REPORTDATA nonce echo through the SVM API CLI |
+| `Invoke-TipHarness.ps1`, `TipHarness.Common.ps1` | deterministic CI/release dispatcher and shared hash, VMGS, HCS, cleanup, and evidence helpers |
 | `Publish-TipPackage.ps1` | enriches a source package using a selected winbuild |
 | `Install-TipDependencies.ps1` | installs bundled modules, VmgsTool, and optional test SecFw on the blade |
 | `troubleshooting/Invoke-GhciVDevDiagnosticCapture.ps1` | captures a focused `Microsoft.Windows.HyperV.GhciVDev` ETL around one repro |
@@ -168,6 +176,16 @@ Then use an **elevated PowerShell 7** process on the TDX lab blade:
 .\Test-TdxLmRebind.ps1 `
     -OldIgvmFilePath .\test-migtd_mock_quote.igvm `
     -NewIgvmFilePath .\test-migtd_mock_quote_rebind.igvm
+
+# release-candidate contract used by the parent Azure DevOps/Cirrus pipeline
+.\Invoke-TipHarness.ps1 `
+    -Mode Run `
+    -Suite ReleaseDeep `
+    -IgvmPath .\candidate.igvm `
+    -HashEvidencePath .\candidate.igvm.hash.evidence.json `
+    -CandidateVmgsPath .\migtd.vmgs `
+    -SvmApiCliPath C:\path\to\cli.exe `
+    -ResultsPath .\results.json
 ```
 
 Policy leaf-key rotation is tested in both directions at the same policy SVN:
@@ -180,6 +198,14 @@ Policy leaf-key rotation is tested in both directions at the same policy SVN:
     -OldIgvmFilePath .\test-migtd_mock_quote_key_rotation.igvm `
     -NewIgvmFilePath .\test-migtd_mock_quote.igvm
 ```
+
+`ReleaseDeep` runs exactly loopback migration, same-image rebind, and
+`getTDreport`. Each case copies the non-empty candidate VMGS into its isolated
+guest-state directory before creating the MigTD HCS VM, verifies the copy by
+length and SHA-256, records source-preservation evidence, and deletes only the
+copy during cleanup. The SVM API case generates 64 random REPORTDATA bytes,
+calls the CLI with `-parse`, and stores compact JSON evidence without the full
+TDREPORT blob.
 
 For both real-quote and mock-quote real-policy images, the builder creates an
 original/rebind pair with a common policy signer. The rebind policy copies the
@@ -239,31 +265,36 @@ ServTdExt prebind, and rebind tests. Key VM settings: HCS schema 2.1, VM version
    `policy_reject_data_raw.json` is the negative twin.
 5. **getquote-all** → exercises initialization GetQuote and requires Worker
    Analytic event 18670 when `-IncludeAgentCases` is set.
-6. **mock-quote variants** → exercise migration without host GHCI GetQuote;
+6. **getTDreport** → requests a TDREPORT from the running candidate MigTD and
+   verifies structure hashes plus the random REPORTDATA echo through the
+   supported SVM API CLI.
+7. **mock-quote variants** → exercise migration without host GHCI GetQuote;
    combine with `-NoPersistentSecrets` to avoid all IGVMAgent calls.
-7. **ServTdExt prebind** → after target startup, verify the 272-byte runtime
+8. **ServTdExt prebind** → after target startup, verify the 272-byte runtime
    extension contains the expected hash at offsets 0 and 112 with zero
    attributes/reserved ranges.
-8. **rebind** → bind a running TD to the first MigTD, register a second MigTD,
+9. **rebind** → bind a running TD to the first MigTD, register a second MigTD,
    and invoke `UpgradeMigrationPolicy`. The two inputs may have different
    hashes or the same hash; same-hash tests use a synthetic second mapping key
    while verifying that the partition retains the real IGVM measurement.
-9. **WaitForRequest coverage matrix** → operations 1–4 are exercised on the
+10. **WaitForRequest coverage matrix** → operations 1–4 are exercised on the
    real host. Operation 5 (`GetMigtdData`) remains reported as unavailable:
    current Host OS `GhciRequestOperation` exposes only operations 1–4 and has
    no PowerShell/HCS trigger for operation 5.
-10. **cycle** → repeat a case N times.
+11. **cycle** → repeat a case N times.
 
 `TdxLiveMigrationUtilities.psm1` provides the host interfaces; reuse is optional —
 any driver hitting the same HCS/VMM cmdlets works.
 
-## 7. CI & open items
+## 7. Pipeline integration & open items
 
-A self-hosted TDX agent can run the same build → register → migrate → assert →
-cleanup flow per PR, publishing the IGVMs, `.hash` files, and migration logs;
-the same artifacts can later promote into the `TDX_LM_IGVM_Binaries` vpack.
+The supported design is Azure DevOps → CloudVault staging → Cirrus-managed
+physical TiP TDX node. A GitHub self-hosted hardware workflow is intentionally
+not part of this path. The external pipeline must provide the AP-signed
+candidate IGVM, its sibling `.hash` and `.hash.evidence.json`, the release
+`migtd.vmgs`, and a compatible SVM API CLI binary or installed path.
 
-Open: provision the self-hosted TDX agent; collateral refresh cadence; optional
-release-mode (non-debug) build. The QEMU/vsock/serial flow in
-`doc/integration_test.md` stays out of scope (Azure uses the `vmcall-raw`
-transport).
+Open external prerequisites are Cirrus/CloudVault placement, physical-node
+quota, and delivery of a CLI build that includes the `getmigtdreport -parse`
+contract. The QEMU/vsock/serial flow in `doc/integration_test.md` remains out
+of scope (Azure uses `vmcall-raw`).
