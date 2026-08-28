@@ -2324,7 +2324,6 @@ dependencies = [
  "rustls-webpki",
  "serde",
  "serde_json",
- "spin 0.12.3",
  "spin 0.9.9",
  "sys_time 0.1.0",
  "untrusted",

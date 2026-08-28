@@ -43,7 +43,7 @@ impl LibraryCrates {
                     ])
                     .run()?;
                 cmd!(sh, "cargo test")
-                    .args(["-p", name.as_str(), "--features", "policy_v2"])
+                    .args(["-p", name.as_str(), "--features", "policy_v2,servtd_corim"])
                     .run()?;
                 // Cover the vmcall-raw transport layout (incompatible with the
                 // default virtio-vsock feature) so the rebinding module and the
@@ -57,14 +57,14 @@ impl LibraryCrates {
                         name.as_str(),
                         "--no-default-features",
                         "--features",
-                        "main,policy_v2,vmcall-raw",
+                        "main,policy_v2,servtd_corim,vmcall-raw",
                     ])
                     .run()?;
             } else if name.as_str() == "policy" {
                 // Run tests for policy V1 and V2
                 cmd!(sh, "cargo test").args(["-p", name.as_str()]).run()?;
                 cmd!(sh, "cargo test")
-                    .args(["-p", name.as_str(), "--features", "policy_v2"])
+                    .args(["-p", name.as_str(), "--features", "policy_v2,servtd_corim"])
                     .run()?;
             } else {
                 cmd!(sh, "cargo test").args(["-p", name.as_str()]).run()?;

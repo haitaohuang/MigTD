@@ -78,6 +78,34 @@ jobs:
             test-command: "./migtdemu.sh --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --features spdm_attestation --both --no-sudo --log-level info"
             artifact-name: "spdm-policy-v2-test-logs"
 
+          - test-name: "CoRIM Policy v2 Migration"
+            test-type: "corim-migration"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_corim.json --servtd-signer-anchor-file ./config/AzCVMEmu/servtd_signer_anchor.bin --servtd-corim-file ./config/AzCVMEmu/tcb_mapping_corim.cose --mock-report --both --no-sudo --log-level info"
+            artifact-name: "corim-migration-test-logs"
+
+          - test-name: "SPDM CoRIM Rebind Prepare (Mock Report)"
+            test-type: "spdm-corim-rebind"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_corim.json --servtd-signer-anchor-file ./config/AzCVMEmu/servtd_signer_anchor.bin --servtd-corim-file ./config/AzCVMEmu/tcb_mapping_corim.cose --mock-report --features spdm_attestation --both --no-sudo --log-level info"
+            artifact-name: "spdm-corim-rebind-test-logs"
+
+          - test-name: "SPDM CoRIM Rebind Rejects Missing Destination Mapping"
+            test-type: "corim-asymmetric-missing-dst"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_corim_asymmetric.json --servtd-signer-anchor-file ./config/AzCVMEmu/servtd_signer_anchor_asymmetric.bin --src-servtd-corim-file ./config/AzCVMEmu/tcb_mapping_corim_asymmetric_src.cose --dst-servtd-corim-file ./config/AzCVMEmu/tcb_mapping_corim_asymmetric_dst.cose --mock-report --features spdm_attestation --both --no-sudo --log-level info"
+            artifact-name: "corim-asymmetric-missing-dst-test-logs"
+
+          - test-name: "SPDM CoRIM Rebind Rejects Missing Source Mapping"
+            test-type: "corim-asymmetric-missing-src"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_corim_asymmetric.json --servtd-signer-anchor-file ./config/AzCVMEmu/servtd_signer_anchor_asymmetric.bin --src-servtd-corim-file ./config/AzCVMEmu/tcb_mapping_corim_asymmetric_dst.cose --dst-servtd-corim-file ./config/AzCVMEmu/tcb_mapping_corim_asymmetric_src.cose --mock-report --features spdm_attestation --both --no-sudo --log-level info"
+            artifact-name: "corim-asymmetric-missing-src-test-logs"
+
           - test-name: "SPDM Rebind Prepare (Skip RA)"
             test-type: "spdm-rebind-skip-ra"
             install-jq: 'true'
@@ -188,14 +216,25 @@ jobs:
         run: |
           chmod +x ./migtdemu.sh
           chmod +x ./sh_script/build_AzCVMEmu_policy_and_test.sh
+          chmod +x ./sh_script/gen_asymmetric_servtd_corim_fixture.sh
 
       - name: Generate policy files
         if: matrix.install-jq == 'true'
         run: |
           echo "Generating AzCVMEmu policy files with mock measurements..."
-          ./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report --skip-test
+          POLICY_ARGS=(--mock-report --skip-test)
+          if [[ "${{ matrix.test-type }}" == "corim-migration" ||
+                "${{ matrix.test-type }}" == "spdm-corim-rebind" ||
+                "${{ matrix.test-type }}" == corim-asymmetric-* ]]; then
+            POLICY_ARGS+=(--corim-only)
+          fi
+          ./sh_script/build_AzCVMEmu_policy_and_test.sh "${POLICY_ARGS[@]}"
           echo "Policy files generated:"
           ls -la config/AzCVMEmu/policy_v2_signed*.json config/AzCVMEmu/policy_issuer_chain*.pem
+
+      - name: Generate asymmetric CoRIM fixtures
+        if: startsWith(matrix.test-type, 'corim-asymmetric-')
+        run: ./sh_script/gen_asymmetric_servtd_corim_fixture.sh
 
       - name: Run test
         id: test_run
@@ -209,8 +248,26 @@ jobs:
           set -e
           
           echo "Test completed with exit code: $EXIT_CODE"
-          
-          if [[ $EXIT_CODE -eq 0 ]]; then
+
+          if [[ "${{ matrix.test-type }}" == corim-asymmetric-* ]]; then
+            if [[ $EXIT_CODE -eq 0 ]]; then
+              echo "❌ Expected migration to reject the missing peer mapping"
+              echo "test_status=failed" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+            if [[ $EXIT_CODE -eq 124 ]]; then
+              echo "❌ Test timed out instead of rejecting the missing peer mapping"
+              echo "test_status=timeout" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+            if ! grep -aq "UnqualifiedMigTdInfo" migtd_*.log dest_*_out.log 2>/dev/null; then
+              echo "❌ Missing peer mapping was not rejected with UnqualifiedMigTdInfo"
+              echo "test_status=failed" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+            echo "✅ Missing authenticated peer mapping was rejected"
+            echo "test_status=success" >> $GITHUB_OUTPUT
+          elif [[ $EXIT_CODE -eq 0 ]]; then
             echo "✅ Test completed successfully"
             echo "test_status=success" >> $GITHUB_OUTPUT
           elif [[ $EXIT_CODE -eq 124 ]]; then
@@ -346,6 +403,10 @@ jobs:
             config/AzCVMEmu/policy_issuer_chain.pem
             config/AzCVMEmu/policy_issuer_chain_a.pem
             config/AzCVMEmu/policy_issuer_chain_b.pem
+            config/AzCVMEmu/policy_v2_corim_asymmetric.json
+            config/AzCVMEmu/servtd_signer_anchor_asymmetric.bin
+            config/AzCVMEmu/tcb_mapping_corim_asymmetric_src.cose
+            config/AzCVMEmu/tcb_mapping_corim_asymmetric_dst.cose
             target/release/migtd
           retention-days: 7
           if-no-files-found: ignore
