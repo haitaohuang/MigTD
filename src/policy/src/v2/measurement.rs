@@ -9,9 +9,10 @@
 //!
 //! ## RTMR2 policy measurement
 //!
-//! RTMR2 (`mr_index = 0x3`) is extended **once** with the canonical JSON bytes
-//! of `policyData` with `servtdCollateral.servtdTcbMapping` **and**
-//! `servtdCollateral.servtdTcbMappingIssuerChain` removed.
+//! RTMR2 is extended once with canonical `policyData`.
+//! When `servtdCollateral` is present, its `servtdTcbMapping` and
+//! `servtdTcbMappingIssuerChain` fields are removed. CoRIM-only `policyData`
+//! omits `servtdCollateral` and is measured in full.
 //!
 //! The mapping remains updateable after the IGVM is published and contains
 //! the circular `tdinfo_hash`. The mapping issuer's root and EKU are already
@@ -60,8 +61,7 @@ use serde_json::Value;
 
 use crate::PolicyError;
 
-/// Domain-separation tag for the RTMR1 signer anchor. Per spec from issue #916.
-/// Bumped on any breaking change.
+/// Domain tag for the RTMR1 signer-anchor formula.
 pub const SIGNER_ANCHOR_DOMAIN_TAG: &[u8] = b"MIGTD-RTMR1-ANCHOR-V1";
 
 /// Separator between signer-anchor components.
@@ -133,49 +133,12 @@ fn parse_policy_data(policy_input: &[u8]) -> Result<Value, PolicyError> {
     Ok(policy_data)
 }
 
-/// Canonical JSON bytes of `policyData` with `servtdCollateral.servtdTcbMapping`
-/// **and** `servtdCollateral.servtdTcbMappingIssuerChain` removed, INCLUDING
-/// the outer `{` / `}`.
+/// Return the canonical `policyData` bytes extended into RTMR2.
 ///
-/// This is the single buffer extended into RTMR2 by the runtime and by
-/// `migtd-hash` (tag `TAGGED_EVENT_ID_POLICY_DATA = 0x9`, event name
-/// `MigTdPolicyData`). Redacting `servtdTcbMapping` is what breaks the circular
-/// dependency between `svnMappings[].tdMeasurements.tdinfo_hash` and RTMR2:
-/// every other included `policyData` field is bound by virtue of being part of
-/// the canonical object bytes, so the measurement automatically protects future
-/// field additions without manual whitelist maintenance.
-///
-/// Two fields are redacted:
-/// * `servtdCollateral.servtdTcbMapping` (**strict** — its absence is an error)
-///   because the release pipeline must re-issue (re-sign) the TCB mapping with
-///   updated `svnMappings[]` entries without rebuilding the IGVM image, and it
-///   carries the circular `tdinfo_hash`.
-/// * `servtdCollateral.servtdTcbMappingIssuerChain` (**non-strict** — removed
-///   if present) because it is already measured into RTMR1 (the signer anchor);
-///   measuring it again here would be redundant and would re-couple
-///   TCB-mapping-signer rotation to `tdinfo_hash`.
-///
-/// Every other field — `version`, `id`, `policySvn`, `policy`, `forwardPolicy`,
-/// `backwardPolicy`, `collaterals`, `servtdCollateral.majorVersion`,
-/// `servtdCollateral.minorVersion`, `servtdCollateral.servtdIdentity` (with its
-/// signature), and `servtdCollateral.servtdIdentityIssuerChain` — is bound into
-/// RTMR2.
-///
-/// ## Strict redaction (schema-drift defense)
-///
-/// The redaction is **structurally strict**: it requires
-/// `servtdCollateral` to be present as a JSON object, AND
-/// `servtdTcbMapping` to be one of its direct children. Any input that
-/// violates either condition (missing `servtdCollateral`, non-object
-/// `servtdCollateral`, or missing `servtdTcbMapping`) is rejected with
-/// `PolicyError::InvalidPolicy`. A silent no-op on a malformed shape
-/// would let a future schema change (e.g. moving `servtdTcbMapping`
-/// under a new wrapper, making `servtdCollateral` optional, or
-/// type-confusing it to null/string/array) silently land the mapping
-/// bytes — or zero redaction at all — in the RTMR2 extend,
-/// re-introducing the circular dependency this scheme exists to break.
-/// The runtime extender already panics on extraction failure, so the
-/// stricter error path is fail-closed.
+/// JSON collateral must contain a direct `servtdTcbMapping`, which is removed
+/// with its optional issuer chain. CoRIM-only policy omits `servtdCollateral`
+/// and is measured in full. Strict mapping placement makes schema changes fail
+/// instead of silently altering the measurement.
 pub fn extract_canonical_policy_data_bytes(policy_input: &[u8]) -> Result<Vec<u8>, PolicyError> {
     let mut policy_data = parse_policy_data(policy_input)?;
 

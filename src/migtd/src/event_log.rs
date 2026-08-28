@@ -28,7 +28,7 @@ pub const TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT: &[u8] = b"test_disable_ra_and_ac
 pub const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
 pub const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
 pub const TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN: u32 = 0x3;
-/// Canonical policyData bytes with the updateable TCB mapping removed.
+/// Canonical policyData bytes with the updateable mapping and chain removed.
 pub const TAGGED_EVENT_ID_POLICY_DATA: u32 = 0x9;
 pub const TAGGED_EVENT_ID_TEST: u32 = 0x32;
 

@@ -275,21 +275,6 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
 
     let version = initialize_policy();
 
-    // Per GHCI 1.5: Verify own TDINFO.MROWNER/MROWNERCONFIG matches policy key/SVN.
-    // Skipped under AzCVMEmu because the mock TDREPORT has zero MROWNER/MROWNERCONFIG,
-    // which would otherwise fail the check and block all policy_v2 + mock-report tests.
-    #[cfg(all(feature = "vmcall-raw", not(feature = "AzCVMEmu")))]
-    {
-        use migtd::mig_policy;
-        if let Err(e) = mig_policy::verify_own_tdinfo() {
-            log::error!("TDINFO policy binding verification failed: {:?}\n", e);
-            panic_with_guest_crash_reg_report(
-                MigrationResult::InvalidPolicyError as u64,
-                b"TDINFO MROWNER/MROWNERCONFIG mismatch with policy",
-            );
-        }
-    }
-
     let event_data = version.as_bytes();
 
     // Hash canonical policyData while keeping updateable JSON endorsements

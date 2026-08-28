@@ -579,6 +579,14 @@ mod v2 {
         let report_value = Report::new(suppl_data)?;
 
         let migtd = policy.servtd_lookup_by_report(&report_value);
+        if policy.requires_servtd_tcb_status()
+            && migtd
+                .as_ref()
+                .and_then(|lookup| lookup.tcb_status.as_deref())
+                .is_none()
+        {
+            return Err(PolicyError::UnqualifiedMigTdInfo);
+        }
         let pck_crl_num = get_crl_number(collaterals.pck_crl.as_bytes())
             .map_err(|_| PolicyError::InvalidCollateral)?;
         let root_ca_crl_num = get_crl_number(collaterals.root_ca_crl.as_bytes())
@@ -609,6 +617,14 @@ mod v2 {
         // mock-quote builds, rather than substituting local test evidence.
         let tdinfo_hash = tdinfo_hash_from_td_info(&tdreport.td_info)?;
         let migtd = policy.servtd_lookup_by_tdinfo_hash(&tdinfo_hash);
+        if policy.requires_servtd_tcb_status()
+            && migtd
+                .as_ref()
+                .and_then(|lookup| lookup.tcb_status.as_deref())
+                .is_none()
+        {
+            return Err(PolicyError::UnqualifiedMigTdInfo);
+        }
 
         Ok(PolicyEvaluationInfo {
             tee_tcb_svn: Some(tdreport.tee_tcb_info.tee_tcb_svn),
@@ -676,33 +692,6 @@ mod v2 {
             qe_identity_issuer_chain: cstring(collateral.qe_identity_issuer_chain.as_str())?,
             qe_identity: cstring(collateral.qe_identity.as_str())?,
         })
-    }
-
-    /// Per GHCI 1.5: Verify that own TDINFO.MROWNERCONFIG matches policy SVN.
-    ///
-    /// NOTE: the `MROWNER == SHA384(policy-signer public key)` binding has been
-    /// **deprecated** — the policy-signer trust root is now the RTMR1 signer
-    /// anchor, and the CoRIM-only enrollment carries no signer public key in
-    /// the image. Only the MROWNERCONFIG (policy SVN) binding is enforced.
-    /// Must be called at MigTD startup to ensure VMM correctly provisioned the TD.
-    pub fn verify_own_tdinfo() -> Result<(), PolicyError> {
-        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
-        let policy_svn = policy.policy_data.get_policy_svn();
-
-        // Get own TDINFO from TDReport
-        let tdx_report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
-            .map_err(|_| PolicyError::GetTdxReport)?;
-        let td_info = &tdx_report.td_info;
-
-        // Verify MROWNERCONFIG == policy_svn (stored as little-endian u32 in first 4 bytes,
-        // remaining 44 bytes must be zero)
-        let mut expected_mrownerconfig = [0u8; SHA384_DIGEST_SIZE];
-        expected_mrownerconfig[..4].copy_from_slice(&policy_svn.to_le_bytes());
-        if td_info.mrownerconfig != expected_mrownerconfig {
-            return Err(PolicyError::SvnMismatch);
-        }
-
-        Ok(())
     }
 
     /// Destination-side migration helper: authenticate the source MigTD and

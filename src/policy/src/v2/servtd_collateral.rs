@@ -218,7 +218,7 @@ impl TdTcbMapping {
     }
 
     /// Look up the engine SVN for the TD represented by `report` by computing
-    /// `tdinfo_hash` (per redesign §RTMR-layout) and matching the
+    /// `tdinfo_hash` and matching the
     /// `svnMappings[].tdMeasurements.tdinfoHash` entries.
     pub fn get_engine_svn_by_report(&self, report: &Report) -> Option<u16> {
         let tdinfo_hash = compute_tdinfo_hash_from_report(report).ok()?;
@@ -490,16 +490,22 @@ mod test {
             "issueDate": "2025-01-01T00:00:00Z",
             "nextUpdate": "2026-01-01T00:00:00Z",
             "tcbLevels": [
-                { "tcb": { "isvsvn": 1 }, "tcbDate": "2025-01-01T00:00:00Z", "tcbStatus": "UpToDate" },
-                { "tcb": { "isvsvn": 3 }, "tcbDate": "2025-06-01T00:00:00Z", "tcbStatus": "OutOfDate" }
+                { "tcb": { "isvsvn": 1 }, "tcbDate": "2025-01-01T00:00:00Z", "tcbStatus": "Revoked" },
+                { "tcb": { "isvsvn": 3 }, "tcbDate": "2025-06-01T00:00:00Z", "tcbStatus": "UpToDate" }
             ]
         }"#;
         let identity = TdIdentity::deserialize_from_json(json.as_bytes()).unwrap();
         let level = identity.get_tcb_level_by_svn(3).expect("svn 3 present");
         assert_eq!(level.tcb.isvsvn, 3);
         assert_eq!(level.tcb_date, "2025-06-01T00:00:00Z");
-        assert_eq!(level.tcb_status, "OutOfDate");
-        assert!(identity.get_tcb_level_by_svn(2).is_none());
+        assert_eq!(level.tcb_status, "UpToDate");
+
+        let level = identity
+            .get_tcb_level_by_svn(2)
+            .expect("svn 2 floor-matches svn 1");
+        assert_eq!(level.tcb.isvsvn, 1);
+        assert_eq!(level.tcb_status, "Revoked");
+        assert!(identity.get_tcb_level_by_svn(0).is_none());
     }
 
     #[test]

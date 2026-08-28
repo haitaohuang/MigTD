@@ -218,6 +218,15 @@ impl VerifiedPolicy<'_> {
         &self.policy_data.version
     }
 
+    /// Whether servtd lookups use a JSON TD Identity that must provide status.
+    pub fn requires_servtd_tcb_status(&self) -> bool {
+        #[cfg(feature = "servtd_corim")]
+        if self.servtd_corim.is_some() {
+            return false;
+        }
+        self.servtd_identity.is_some()
+    }
+
     /// Set the sole servTD lookup authority. Peer CoRIMs must first be
     /// authenticated against that peer's signer anchor.
     #[cfg(feature = "servtd_corim")]
@@ -540,8 +549,7 @@ impl<'a> PolicyData<'a> {
 
     /// Enforce non-optional deny checks.
     ///
-    /// Reject `Revoked` platform status when global checks are enabled.
-    /// Always check engine status; treat unknown (`None`) as denied.
+    /// Reject any available `Revoked` status.
     fn enforce_mandatory_deny(
         value: &PolicyEvaluationInfo,
         skip_global: bool,
@@ -554,14 +562,10 @@ impl<'a> PolicyData<'a> {
             }
         }
 
-        // Engine status must be known; fail closed on `None`.
-        match value.migtd_tcb_status.as_deref() {
-            Some(status) => {
-                if ServtdTcbStatus::try_from(status)? == ServtdTcbStatus::Revoked {
-                    return Err(PolicyError::SvnMismatch);
-                }
+        if let Some(status) = value.migtd_tcb_status.as_deref() {
+            if ServtdTcbStatus::try_from(status)? == ServtdTcbStatus::Revoked {
+                return Err(PolicyError::SvnMismatch);
             }
-            None => return Err(PolicyError::UnqualifiedMigTdInfo),
         }
 
         Ok(())
@@ -1100,7 +1104,8 @@ mod test {
         let policy = RawPolicyData::deserialize_from_json(policy_data).unwrap();
         let issuer_chain =
             include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem");
-        policy.verify(issuer_chain).unwrap();
+        let verified = policy.verify(issuer_chain).unwrap();
+        assert!(verified.requires_servtd_tcb_status());
     }
 
     #[test]
@@ -1115,6 +1120,7 @@ mod test {
 
         assert!(verified.servtd_identity.is_none());
         assert!(verified.servtd_identity_issuer_chain.is_none());
+        assert!(!verified.requires_servtd_tcb_status());
 
         let known_hash = hex_string_to_bytes(
             &verified.servtd_tcb_mapping.as_ref().unwrap().svn_mappings[0]
@@ -1402,6 +1408,7 @@ mod test {
 
         let tcb = include_bytes!("../../test/policy_v2/corim/tcb_mapping.cbor");
         verified.set_servtd_corim(ServtdCorim::decode(tcb, 0).unwrap());
+        assert!(!verified.requires_servtd_tcb_status());
 
         assert!(verified
             .servtd_lookup_by_tdinfo_hash(&legacy_hash)
@@ -1850,6 +1857,8 @@ mod test {
         // No block: still deny `Revoked` platform status.
         let value = PolicyEvaluationInfo {
             tcb_status: Some("Revoked".to_string()),
+            migtd_isvsvn: Some(1),
+            migtd_tcb_status: Some("UpToDate".to_string()),
             ..PolicyEvaluationInfo::default()
         };
         let relative = PolicyEvaluationInfo::default();
@@ -1864,6 +1873,7 @@ mod test {
     fn test_absent_block_denies_revoked_engine() {
         // No block: still deny `Revoked` engine status.
         let value = PolicyEvaluationInfo {
+            migtd_isvsvn: Some(1),
             migtd_tcb_status: Some("Revoked".to_string()),
             ..PolicyEvaluationInfo::default()
         };
@@ -1880,6 +1890,7 @@ mod test {
         // No block: non-`Revoked` status is allowed.
         let value = PolicyEvaluationInfo {
             tcb_status: Some("UpToDate".to_string()),
+            migtd_isvsvn: Some(1),
             migtd_tcb_status: Some("UpToDate".to_string()),
             ..PolicyEvaluationInfo::default()
         };
@@ -1895,6 +1906,7 @@ mod test {
         // In rebinding (`skip_global`), platform status is ignored.
         let value = PolicyEvaluationInfo {
             tcb_status: Some("Revoked".to_string()),
+            migtd_isvsvn: Some(1),
             migtd_tcb_status: Some("UpToDate".to_string()),
             ..PolicyEvaluationInfo::default()
         };
@@ -1906,20 +1918,38 @@ mod test {
     }
 
     #[test]
-    fn test_unclassifiable_engine_is_denied() {
-        // Fail closed: unknown engine status (`None`) is denied in all paths.
+    fn test_absent_block_allows_engine_without_identity_status() {
         let value = PolicyEvaluationInfo {
             tcb_status: Some("UpToDate".to_string()),
-            migtd_tcb_status: None,
             ..PolicyEvaluationInfo::default()
         };
         let relative = PolicyEvaluationInfo::default();
 
         assert!(
-            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, false).is_err()
+            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, false).is_ok()
         );
         assert!(
-            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, true).is_err()
+            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, true).is_ok()
         );
+    }
+
+    #[test]
+    fn test_servtd_rule_requires_endorsed_engine() {
+        let block = vec![PolicyTypes::Servtd(
+            serde_json::from_str(
+                r#"{"migtdIdentity":{"isvsvn":{"operation":"greater-or-equal","reference":1}}}"#,
+            )
+            .unwrap(),
+        )];
+        let value = PolicyEvaluationInfo::default();
+        let relative = PolicyEvaluationInfo::default();
+
+        assert!(PolicyData::<'static>::evaluate_policy_block(
+            Some(&block),
+            &value,
+            &relative,
+            false
+        )
+        .is_err());
     }
 }
