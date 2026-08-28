@@ -199,9 +199,7 @@ pub struct VerifiedPolicy<'a> {
     pub servtd_identity: Option<TdIdentity>,
     /// JSON TD Identity signer chain retained for CRL checks.
     pub servtd_identity_issuer_chain: Option<String>,
-    /// Optional PEM CRL for the servTD signer chain, from
-    /// `servtdCollateral.servtdCrl`. Retained so the runtime can cross-check a
-    /// peer's signer chain against the local trusted CRL.
+    /// Authoritative signer CRL from top-level or legacy JSON collateral.
     pub servtd_crl: Option<String>,
     /// The RTMR1 signer anchor `A = SHA384(tag ‖ H(rootDER) ‖ leafEkuOidDER)`
     /// used to authenticate peer collateral.
@@ -211,7 +209,23 @@ pub struct VerifiedPolicy<'a> {
     /// with no fallback to the legacy JSON collateral). Only available with
     /// the `servtd_corim` feature.
     #[cfg(feature = "servtd_corim")]
-    servtd_corim: Option<ServtdCorim>,
+    servtd_corim: Option<ServtdCorimAuthority<'a>>,
+}
+
+#[cfg(feature = "servtd_corim")]
+enum ServtdCorimAuthority<'a> {
+    Owned(ServtdCorim),
+    Borrowed(&'a ServtdCorim),
+}
+
+#[cfg(feature = "servtd_corim")]
+impl ServtdCorimAuthority<'_> {
+    fn as_ref(&self) -> &ServtdCorim {
+        match self {
+            Self::Owned(corim) => corim,
+            Self::Borrowed(corim) => corim,
+        }
+    }
 }
 
 impl VerifiedPolicy<'_> {
@@ -228,7 +242,45 @@ impl VerifiedPolicy<'_> {
     /// longer consulted.
     #[cfg(feature = "servtd_corim")]
     pub fn set_servtd_corim(&mut self, corim: ServtdCorim) {
-        self.servtd_corim = Some(corim);
+        self.servtd_corim = Some(ServtdCorimAuthority::Owned(corim));
+    }
+
+    /// Use the local, already signature/anchor-verified CoRIM as the authority
+    /// for peer TCB lookups. Peers do not supply a CoRIM or CRL for this step.
+    #[cfg(feature = "servtd_corim")]
+    pub fn set_servtd_corim_from(&mut self, local_policy: &'static VerifiedPolicy<'static>) {
+        self.servtd_corim = local_policy
+            .servtd_corim
+            .as_ref()
+            .map(|corim| ServtdCorimAuthority::Borrowed(corim.as_ref()));
+    }
+
+    /// Check all signer chains against the local authoritative CRL.
+    pub fn verify_signer_chains_not_revoked(
+        &self,
+        authoritative_crl: &[u8],
+    ) -> Result<(), PolicyError> {
+        if let Some(mapping_chain) = self.servtd_tcb_mapping_issuer_chain.as_deref() {
+            crypto::verify_signer_chain_not_revoked(
+                crypto::SignerChain::Pem(mapping_chain.as_bytes()),
+                authoritative_crl,
+            )
+            .map_err(|_| PolicyError::SignerRevoked)?;
+        }
+        if let Some(identity_chain) = self.servtd_identity_issuer_chain.as_deref() {
+            crypto::verify_signer_chain_not_revoked(
+                crypto::SignerChain::Pem(identity_chain.as_bytes()),
+                authoritative_crl,
+            )
+            .map_err(|_| PolicyError::SignerRevoked)?;
+        }
+        #[cfg(feature = "servtd_corim")]
+        if let Some(corim) = self.servtd_corim.as_ref() {
+            corim
+                .as_ref()
+                .verify_signer_chain_not_revoked(authoritative_crl)?;
+        }
+        Ok(())
     }
 
     /// Resolve a TDINFO hash through the CoRIM, or through the JSON mapping and
@@ -236,7 +288,7 @@ impl VerifiedPolicy<'_> {
     pub fn servtd_lookup_by_tdinfo_hash(&self, tdinfo_hash: &[u8]) -> Option<ServtdLookup> {
         #[cfg(feature = "servtd_corim")]
         if let Some(corim) = &self.servtd_corim {
-            return corim.lookup_by_tdinfo_hash(tdinfo_hash);
+            return corim.as_ref().lookup_by_tdinfo_hash(tdinfo_hash);
         }
         let isvsvn = self
             .servtd_tcb_mapping
@@ -298,17 +350,57 @@ impl<'a> RawPolicyData<'a> {
     /// Verify the servtd collateral using the given (RTMR1-anchored) issuer
     /// chain.
     pub fn verify(&self, issuer_chain: &[u8]) -> Result<VerifiedPolicy<'a>, PolicyError> {
+        let verified_policy = self.verify_signatures_and_anchors(issuer_chain)?;
+        if let Some(servtd_crl) = verified_policy.servtd_crl.as_deref() {
+            verified_policy.verify_signer_chains_not_revoked(servtd_crl.as_bytes())?;
+        }
+        Ok(verified_policy)
+    }
+
+    /// Verify a peer policy while applying only the caller-provided,
+    /// locally-authoritative servTD CRL to its signer chains. The peer's own
+    /// delivered CRL remains part of its measured policy data but is not
+    /// trusted for revocation decisions.
+    pub fn verify_with_authoritative_servtd_crl(
+        &self,
+        issuer_chain: &[u8],
+        authoritative_crl: Option<&[u8]>,
+    ) -> Result<VerifiedPolicy<'a>, PolicyError> {
+        let verified_policy = self.verify_signatures_and_anchors(issuer_chain)?;
+        if let Some(servtd_crl) = authoritative_crl {
+            verified_policy.verify_signer_chains_not_revoked(servtd_crl)?;
+        }
+        Ok(verified_policy)
+    }
+
+    fn verify_signatures_and_anchors(
+        &self,
+        issuer_chain: &[u8],
+    ) -> Result<VerifiedPolicy<'a>, PolicyError> {
         let cfv_anchor = resolve_signer_anchor(issuer_chain)?;
 
         let policy_data: PolicyData<'a> =
             serde_json::from_str(self.policy_data.get()).map_err(|_| PolicyError::InvalidPolicy)?;
+
+        let servtd_crl = match (
+            policy_data.servtd_crl.as_ref(),
+            policy_data
+                .servtd_collateral
+                .as_ref()
+                .and_then(|collateral| collateral.servtd_crl.as_ref()),
+        ) {
+            (Some(top_level), Some(legacy)) if top_level != legacy => {
+                return Err(PolicyError::InvalidCollateral);
+            }
+            (Some(top_level), _) => Some(top_level.clone()),
+            (None, legacy) => legacy.cloned(),
+        };
 
         let (
             servtd_tcb_mapping,
             servtd_tcb_mapping_issuer_chain,
             servtd_identity,
             servtd_identity_issuer_chain,
-            servtd_crl,
         ) = match &policy_data.servtd_collateral {
             Some(servtd_collateral) => {
                 let servtd_tcb_mapping = servtd_collateral.servtd_tcb_mapping.verify_signature(
@@ -346,33 +438,14 @@ impl<'a> RawPolicyData<'a> {
                     }
                 }
 
-                // Signer-key revocation (fail-closed).
-                if let Some(servtd_crl) = servtd_collateral.servtd_crl.as_deref() {
-                    crypto::verify_signer_chain_not_revoked(
-                        servtd_collateral.servtd_tcb_mapping_issuer_chain.as_bytes(),
-                        servtd_crl.as_bytes(),
-                    )
-                    .map_err(|_| PolicyError::SignerRevoked)?;
-                    if let Some(identity_chain) =
-                        servtd_collateral.servtd_identity_issuer_chain.as_deref()
-                    {
-                        crypto::verify_signer_chain_not_revoked(
-                            identity_chain.as_bytes(),
-                            servtd_crl.as_bytes(),
-                        )
-                        .map_err(|_| PolicyError::SignerRevoked)?;
-                    }
-                }
-
                 (
                     Some(servtd_tcb_mapping),
                     Some(servtd_collateral.servtd_tcb_mapping_issuer_chain.clone()),
                     servtd_identity,
                     servtd_collateral.servtd_identity_issuer_chain.clone(),
-                    servtd_collateral.servtd_crl.clone(),
                 )
             }
-            None => (None, None, None, None, None),
+            None => (None, None, None, None),
         };
 
         if !policy_data.validate() {
@@ -403,6 +476,10 @@ pub struct PolicyData<'a> {
     forward_policy: Option<Vec<PolicyTypes>>,
     backward_policy: Option<Vec<PolicyTypes>>,
     pub collaterals: Collaterals,
+    /// Top-level signer CRL for CoRIM-only policies; the legacy nested form is
+    /// also accepted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub servtd_crl: Option<String>,
     /// JSON servTD collateral, absent for CoRIM-only policies.
     #[serde(borrow, default, skip_serializing_if = "Option::is_none")]
     pub servtd_collateral: Option<ServtdCollateral<'a>>,
@@ -1024,6 +1101,15 @@ mod test {
     use super::*;
     use alloc::{format, string::ToString, vec};
 
+    fn delivered_servtd_crl(policy: &RawPolicyData<'_>) -> String {
+        let policy_data: serde_json::Value =
+            serde_json::from_str(policy.policy_data.get()).unwrap();
+        policy_data["servtdCollateral"]["servtdCrl"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
     #[test]
     fn test_parse_policy_data() {
         let policy = include_str!("../../test/policy_v2/policy_data.json");
@@ -1097,6 +1183,63 @@ mod test {
         assert!(date_bar.evaluate(&value, &relative).is_ok());
     }
 
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn azure_corim_policy_uses_svn_only_servtd_rule() {
+        use crate::v2::hex_string_to_bytes;
+
+        let policy: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../../config/Azure/policy_data_raw.json"
+        ))
+        .unwrap();
+        let servtd = policy["policy"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|entry| entry.get("servtd"))
+            .unwrap()
+            .clone();
+        let servtd: ServtdPolicy = serde_json::from_value(servtd).unwrap();
+
+        let corim = ServtdCorim::decode(
+            include_bytes!("../../test/policy_v2/corim/tcb_mapping.cbor"),
+            0,
+        )
+        .unwrap();
+        let endorsed_hash = hex_string_to_bytes(
+            "347c6170a91341351937962e08a7695703e7b87984b1c69216372c380302ac420\
+             d42381e4585007057b20b2579286384",
+        )
+        .unwrap();
+        let lookup = corim.lookup_by_tdinfo_hash(&endorsed_hash).unwrap();
+        assert!(lookup.tcb_date.is_none());
+        assert!(lookup.tcb_status.is_none());
+
+        let same_peer = PolicyEvaluationInfo {
+            migtd_isvsvn: Some(lookup.isvsvn),
+            migtd_tcb_date: lookup.tcb_date,
+            migtd_tcb_status: lookup.tcb_status,
+            ..Default::default()
+        };
+        let same = PolicyEvaluationInfo {
+            migtd_isvsvn: Some(lookup.isvsvn),
+            ..Default::default()
+        };
+        assert!(servtd.evaluate(&same_peer, &same).is_ok());
+
+        let newer_peer = PolicyEvaluationInfo {
+            migtd_isvsvn: Some(lookup.isvsvn + 1),
+            ..Default::default()
+        };
+        assert!(servtd.evaluate(&newer_peer, &same).is_ok());
+
+        let newer_local = PolicyEvaluationInfo {
+            migtd_isvsvn: Some(lookup.isvsvn + 1),
+            ..Default::default()
+        };
+        assert!(servtd.evaluate(&same_peer, &newer_local).is_err());
+    }
+
     #[test]
     fn test_verify_policy_without_outer_signature() {
         let policy_data = include_bytes!("../../test/policy_v2/policy_v2.json");
@@ -1147,12 +1290,6 @@ mod test {
         }
     }
 
-    /// End-to-end `verify()` revocation enforcement: a policy whose
-    /// `servtdCollateral.servtdCrl` revokes the signer leaf must fail closed
-    /// with `SignerRevoked`, while the same policy carrying a revocation-free
-    /// CRL verifies. The fixtures under `test/policy_v2/revocation/` are a
-    /// self-contained PKI (one signer for both identity and mapping) with
-    /// matching empty and revoking CRLs.
     #[test]
     fn verify_enforces_servtd_signer_revocation() {
         let chain = include_bytes!("../../test/policy_v2/revocation/signer_chain.pem");
@@ -1172,6 +1309,77 @@ mod test {
             Err(other) => panic!("expected SignerRevoked, got {:?}", other),
             Ok(_) => panic!("expected SignerRevoked, but verify() succeeded"),
         }
+    }
+
+    #[test]
+    fn peer_verification_uses_authoritative_local_servtd_crl() {
+        let chain = include_bytes!("../../test/policy_v2/revocation/signer_chain.pem");
+
+        let peer_empty = RawPolicyData::deserialize_from_json(include_bytes!(
+            "../../test/policy_v2/revocation/policy_ok.json"
+        ))
+        .unwrap();
+        let empty_crl = delivered_servtd_crl(&peer_empty);
+        let peer_revoking = RawPolicyData::deserialize_from_json(include_bytes!(
+            "../../test/policy_v2/revocation/policy_revoked.json"
+        ))
+        .unwrap();
+        let revoked_crl = delivered_servtd_crl(&peer_revoking);
+
+        assert!(matches!(
+            peer_empty.verify_with_authoritative_servtd_crl(chain, Some(revoked_crl.as_bytes())),
+            Err(PolicyError::SignerRevoked)
+        ));
+
+        peer_revoking
+            .verify_with_authoritative_servtd_crl(chain, Some(empty_crl.as_bytes()))
+            .expect("the peer CRL must not override the local CRL");
+    }
+
+    #[test]
+    fn corim_only_policy_retains_top_level_servtd_crl() {
+        let raw = RawPolicyData::deserialize_from_json(include_bytes!(
+            "../../test/policy_v2/revocation/policy_ok.json"
+        ))
+        .unwrap();
+        let mut policy_data: serde_json::Value =
+            serde_json::from_str(raw.policy_data.get()).unwrap();
+        let servtd_crl = policy_data["servtdCollateral"]["servtdCrl"].take();
+        let policy_data = policy_data.as_object_mut().unwrap();
+        policy_data.remove("servtdCollateral");
+        policy_data.insert("servtdCrl".to_string(), servtd_crl.clone());
+
+        let wrapped = format!(
+            r#"{{"policyData":{}}}"#,
+            serde_json::Value::Object(policy_data.clone())
+        );
+        let policy = RawPolicyData::deserialize_from_json(wrapped.as_bytes()).unwrap();
+        let verified = policy
+            .verify(&[0xA5; SHA384_DIGEST_SIZE])
+            .expect("CoRIM-only policy should retain its CRL");
+
+        assert!(verified.servtd_tcb_mapping.is_none());
+        assert_eq!(verified.servtd_crl.as_deref(), servtd_crl.as_str());
+    }
+
+    #[test]
+    fn conflicting_servtd_crl_locations_fail_closed() {
+        let raw = RawPolicyData::deserialize_from_json(include_bytes!(
+            "../../test/policy_v2/revocation/policy_ok.json"
+        ))
+        .unwrap();
+        let mut policy_data: serde_json::Value =
+            serde_json::from_str(raw.policy_data.get()).unwrap();
+        policy_data["servtdCrl"] = serde_json::Value::String("different CRL".to_string());
+
+        let wrapped = format!(r#"{{"policyData":{policy_data}}}"#);
+        let policy = RawPolicyData::deserialize_from_json(wrapped.as_bytes()).unwrap();
+        assert!(matches!(
+            policy.verify(include_bytes!(
+                "../../test/policy_v2/revocation/signer_chain.pem"
+            )),
+            Err(PolicyError::InvalidCollateral)
+        ));
     }
 
     #[test]

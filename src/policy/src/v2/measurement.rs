@@ -458,6 +458,15 @@ mod tests {
     }
 
     #[test]
+    fn extract_measures_top_level_servtd_crl() {
+        let empty = br#"{"version":"2.0","id":"X","servtdCrl":"empty"}"#;
+        let revoked = br#"{"version":"2.0","id":"X","servtdCrl":"revoked"}"#;
+        let out_empty = extract_canonical_policy_data_bytes(empty).unwrap();
+        let out_revoked = extract_canonical_policy_data_bytes(revoked).unwrap();
+        assert_ne!(out_empty, out_revoked);
+    }
+
+    #[test]
     fn extract_rejects_non_object_servtd_collateral() {
         for shape in [
             br#"{"servtdCollateral":null}"#.as_slice(),
