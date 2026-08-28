@@ -1455,6 +1455,7 @@ dependencies = [
  "crypto",
  "env_logger",
  "hex",
+ "igvm",
  "log",
  "migtd",
  "serde_json",
