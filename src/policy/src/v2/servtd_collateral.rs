@@ -23,8 +23,8 @@ pub struct ServtdCollateral<'a> {
     #[serde(borrow)]
     pub servtd_tcb_mapping: RawServtdTcbMapping<'a>,
     /// Optional TD Identity issuer chain (PEM). Present only when the optional
-    /// `servtdIdentity` is shipped; bound to the RTMR1 signer anchor in
-    /// `RawPolicyData::verify`.
+    /// `servtdIdentity` is shipped; measured into RTMR2 and also bound to the
+    /// RTMR1 signer anchor in `RawPolicyData::verify`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub servtd_identity_issuer_chain: Option<String>,
     /// Optional MigTD TD Identity (`isvsvn -> (tcb_date, tcb_status)`).
@@ -573,9 +573,9 @@ mod test {
 
     /// Cross-implementation parity: `tdinfo_hash` computed from the
     /// canonical 10 fields here MUST equal `SHA384(unmasked_TDINFO_512)` used
-    /// by `migtd-hash`, `mig-td-tools tdinfo-hash`, and the bash mock-test
-    /// scripts. If they ever drift, runtime policy lookup silently fails for
-    /// all valid TDs.
+    /// by `migtd-hash`, the TCB-mapping CoRIM production tools, and the bash
+    /// mock-test scripts. If they ever drift, runtime policy lookup silently
+    /// fails for all valid TDs.
     #[test]
     fn tdinfo_hash_matches_direct_sha384_formula() {
         use crypto::hash::digest_sha384;

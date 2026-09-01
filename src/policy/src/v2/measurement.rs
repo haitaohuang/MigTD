@@ -18,8 +18,8 @@
 //! bound by the RTMR1 signer anchor, so measuring its chain would make signer
 //! rotation change `tdinfo_hash`.
 //!
-//! The updateable mapping, optional identity, and their issuer chains are
-//! redacted. All other `policyData` fields remain measured.
+//! The updateable mapping and its issuer chain are redacted. All other fields,
+//! including the optional identity and its issuer chain, remain measured.
 //!
 //! ## Canonicalization
 //!
@@ -154,14 +154,12 @@ fn parse_policy_data(policy_input: &[u8]) -> Result<Value, PolicyError> {
 ///   if present) because it is already measured into RTMR1 (the signer anchor);
 ///   measuring it again here would be redundant and would re-couple
 ///   TCB-mapping-signer rotation to `tdinfo_hash`.
-/// * `servtdCollateral.servtdIdentity` and
-///   `servtdCollateral.servtdIdentityIssuerChain` (**non-strict** — removed if
-///   present) because the optional TD Identity must remain re-issuable without
-///   re-releasing the image, and its issuer chain is bound into RTMR1 instead.
 ///
 /// Every other field — `version`, `id`, `policySvn`, `policy`, `forwardPolicy`,
-/// `backwardPolicy`, `collaterals`, `servtdCollateral.majorVersion`, and
-/// `servtdCollateral.minorVersion` — is bound into RTMR2.
+/// `backwardPolicy`, `collaterals`, `servtdCollateral.majorVersion`,
+/// `servtdCollateral.minorVersion`, `servtdCollateral.servtdIdentity` (with its
+/// signature), and `servtdCollateral.servtdIdentityIssuerChain` — is bound into
+/// RTMR2.
 ///
 /// ## Strict redaction (schema-drift defense)
 ///
@@ -192,10 +190,6 @@ pub fn extract_canonical_policy_data_bytes(policy_input: &[u8]) -> Result<Vec<u8
 
             // Policy verification validates the chain separately.
             coll.remove("servtdTcbMappingIssuerChain");
-
-            // Redact the optional TD Identity and its issuer chain (non-strict).
-            coll.remove("servtdIdentity");
-            coll.remove("servtdIdentityIssuerChain");
         }
     }
 
@@ -376,28 +370,19 @@ mod tests {
     }
 
     #[test]
-    fn extract_redacts_servtd_identity() {
-        // Two policies that differ in servtdCollateral.servtdIdentity MUST now
-        // produce IDENTICAL canonical bytes — the optional TD Identity is
-        // redacted from RTMR2 (like the TCB mapping) and bound to RTMR1
-        // instead, so it stays re-issuable without an image rebuild.
+    fn extract_measures_servtd_identity() {
         let a = r#"{"servtdCollateral":{"servtdIdentity":{"tdIdentity":{"id":"i1"},"signature":"aa"},"servtdTcbMapping":{}}}"#;
-        let b = r#"{"servtdCollateral":{"servtdIdentity":{"tdIdentity":{"id":"i2"},"signature":"bb"},"servtdTcbMapping":{}}}"#;
+        let b = r#"{"servtdCollateral":{"servtdIdentity":{"tdIdentity":{"id":"i1"},"signature":"bb"},"servtdTcbMapping":{}}}"#;
         let out_a = extract_canonical_policy_data_bytes(a.as_bytes()).unwrap();
         let out_b = extract_canonical_policy_data_bytes(b.as_bytes()).unwrap();
-        assert_eq!(out_a, out_b);
-        assert!(!out_a
+        assert_ne!(out_a, out_b);
+        assert!(out_a
             .windows(b"servtdIdentity".len())
             .any(|w| w == b"servtdIdentity"));
     }
 
     #[test]
-    fn extract_redacts_both_identity_and_mapping_chains() {
-        // Both servtdIdentityIssuerChain and servtdTcbMappingIssuerChain are
-        // measured into RTMR1 (the signer anchor) and redacted from RTMR2, so
-        // substituting either MUST NOT flip the extend — their integrity is
-        // enforced by the RTMR1 anchor binding in `RawPolicyData::verify`, not
-        // by this measurement.
+    fn extract_measures_identity_chain_but_redacts_mapping_chain() {
         let base = r#"{"servtdCollateral":{"servtdIdentityIssuerChain":"chain-A","servtdTcbMappingIssuerChain":"chain-A","servtdTcbMapping":{}}}"#;
         let diff_identity = r#"{"servtdCollateral":{"servtdIdentityIssuerChain":"chain-B","servtdTcbMappingIssuerChain":"chain-A","servtdTcbMapping":{}}}"#;
         let diff_mapping = r#"{"servtdCollateral":{"servtdIdentityIssuerChain":"chain-A","servtdTcbMappingIssuerChain":"chain-B","servtdTcbMapping":{}}}"#;
@@ -406,8 +391,7 @@ mod tests {
             extract_canonical_policy_data_bytes(diff_identity.as_bytes()).unwrap();
         let out_diff_mapping =
             extract_canonical_policy_data_bytes(diff_mapping.as_bytes()).unwrap();
-        // Both issuer chains are redacted (anchored by RTMR1) -> stable.
-        assert_eq!(out_base, out_diff_identity);
+        assert_ne!(out_base, out_diff_identity);
         assert_eq!(out_base, out_diff_mapping);
     }
 
@@ -514,7 +498,7 @@ mod tests {
     fn extract_sample_policy_canonical_bytes() {
         let out =
             extract_canonical_policy_data_bytes(sample_bare_policy_data().as_bytes()).unwrap();
-        let expected = br#"{"collaterals":{"majorVersion":1,"minorVersion":0,"teeType":129},"id":"X-uuid","policy":[{"global":{"tcb":{"tcbDate":{"operation":"ge","reference":"2023"}}}},{"servtd":{"x":1}}],"policySvn":7,"servtdCollateral":{"majorVersion":1,"minorVersion":0},"version":"2.0"}"#;
+        let expected = br#"{"collaterals":{"majorVersion":1,"minorVersion":0,"teeType":129},"id":"X-uuid","policy":[{"global":{"tcb":{"tcbDate":{"operation":"ge","reference":"2023"}}}},{"servtd":{"x":1}}],"policySvn":7,"servtdCollateral":{"majorVersion":1,"minorVersion":0,"servtdIdentity":{"signature":"deadbeef","tdIdentity":{"id":"identity-1","tcbLevels":[],"version":1}},"servtdIdentityIssuerChain":"chain"},"version":"2.0"}"#;
         assert_eq!(&out, expected);
     }
 
