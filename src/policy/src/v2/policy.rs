@@ -204,28 +204,9 @@ pub struct VerifiedPolicy<'a> {
     /// The RTMR1 signer anchor `A = SHA384(tag ‖ H(rootDER) ‖ leafEkuOidDER)`
     /// used to authenticate peer collateral.
     pub signer_anchor: [u8; SHA384_DIGEST_SIZE],
-    /// Optional CoRIM-encoded servtd collateral. When attached it is the sole
-    /// authority for servtd lookups (fail-closed: a CoRIM miss is a miss,
-    /// with no fallback to the legacy JSON collateral). Only available with
-    /// the `servtd_corim` feature.
+    /// Authenticated CoRIM; when set, it is the sole servTD lookup authority.
     #[cfg(feature = "servtd_corim")]
-    servtd_corim: Option<ServtdCorimAuthority<'a>>,
-}
-
-#[cfg(feature = "servtd_corim")]
-enum ServtdCorimAuthority<'a> {
-    Owned(ServtdCorim),
-    Borrowed(&'a ServtdCorim),
-}
-
-#[cfg(feature = "servtd_corim")]
-impl ServtdCorimAuthority<'_> {
-    fn as_ref(&self) -> &ServtdCorim {
-        match self {
-            Self::Owned(corim) => corim,
-            Self::Borrowed(corim) => corim,
-        }
-    }
+    servtd_corim: Option<ServtdCorim>,
 }
 
 impl VerifiedPolicy<'_> {
@@ -237,22 +218,22 @@ impl VerifiedPolicy<'_> {
         &self.policy_data.version
     }
 
-    /// Attach decoded CoRIM servtd collateral. Once set, **all** servtd
-    /// lookups resolve against the CoRIM and the legacy JSON collateral is no
-    /// longer consulted.
+    /// Set the sole servTD lookup authority. Peer CoRIMs must first be
+    /// authenticated against that peer's signer anchor.
     #[cfg(feature = "servtd_corim")]
     pub fn set_servtd_corim(&mut self, corim: ServtdCorim) {
-        self.servtd_corim = Some(ServtdCorimAuthority::Owned(corim));
+        self.servtd_corim = Some(corim);
     }
 
-    /// Use the local, already signature/anchor-verified CoRIM as the authority
-    /// for peer TCB lookups. Peers do not supply a CoRIM or CRL for this step.
+    /// Verify and attach a peer's TCB-mapping CoRIM using its signer anchor.
     #[cfg(feature = "servtd_corim")]
-    pub fn set_servtd_corim_from(&mut self, local_policy: &'static VerifiedPolicy<'static>) {
-        self.servtd_corim = local_policy
-            .servtd_corim
-            .as_ref()
-            .map(|corim| ServtdCorimAuthority::Borrowed(corim.as_ref()));
+    pub fn attach_verified_peer_servtd_corim(
+        &mut self,
+        peer_servtd_corim_cose: &[u8],
+    ) -> Result<(), PolicyError> {
+        let corim = ServtdCorim::decode_signed(peer_servtd_corim_cose, 0, &self.signer_anchor)?;
+        self.servtd_corim = Some(corim);
+        Ok(())
     }
 
     /// Check all signer chains against the local authoritative CRL.
@@ -276,9 +257,7 @@ impl VerifiedPolicy<'_> {
         }
         #[cfg(feature = "servtd_corim")]
         if let Some(corim) = self.servtd_corim.as_ref() {
-            corim
-                .as_ref()
-                .verify_signer_chain_not_revoked(authoritative_crl)?;
+            corim.verify_signer_chain_not_revoked(authoritative_crl)?;
         }
         Ok(())
     }
@@ -288,7 +267,7 @@ impl VerifiedPolicy<'_> {
     pub fn servtd_lookup_by_tdinfo_hash(&self, tdinfo_hash: &[u8]) -> Option<ServtdLookup> {
         #[cfg(feature = "servtd_corim")]
         if let Some(corim) = &self.servtd_corim {
-            return corim.as_ref().lookup_by_tdinfo_hash(tdinfo_hash);
+            return corim.lookup_by_tdinfo_hash(tdinfo_hash);
         }
         let isvsvn = self
             .servtd_tcb_mapping
@@ -426,8 +405,7 @@ impl<'a> RawPolicyData<'a> {
                     return Err(PolicyError::SignerAnchorMismatch);
                 }
 
-                // The optional TD Identity issuer chain is redacted from RTMR2
-                // too, so bind it to the same RTMR1 signer anchor when present.
+                // Mapping and identity must share the RTMR1 signer anchor.
                 if let Some(identity_chain) =
                     servtd_collateral.servtd_identity_issuer_chain.as_deref()
                 {
@@ -1436,6 +1414,135 @@ mod test {
         let hit = verified.servtd_lookup_by_tdinfo_hash(&corim_hash);
         assert!(hit.is_some());
         assert_eq!(hit.unwrap().isvsvn, 1);
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    const CORIM_KNOWN_HASH_HEX: &str = "347c6170a91341351937962e08a7695703e7b87984b1c69216372c380302ac420d42381e4585007057b20b2579286384";
+
+    #[cfg(feature = "servtd_corim")]
+    fn base_verified_policy() -> VerifiedPolicy<'static> {
+        let policy_data = include_bytes!("../../test/policy_v2/policy_v2.json");
+        let issuer_chain =
+            include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem");
+        let policy = RawPolicyData::deserialize_from_json(policy_data).unwrap();
+        policy.verify(issuer_chain).unwrap()
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    fn signer_anchor_from_cose_sample(cose: &[u8]) -> [u8; SHA384_DIGEST_SIZE] {
+        use crate::v2::compute_signer_anchor;
+
+        let env = corim::types::signed::decode_signed_corim(cose).expect("decode COSE");
+        let tbs = env.to_be_signed(&[]).expect("tbs");
+        let chain = env.protected.x5chain.as_ref().expect("x5chain");
+        let certs = chain.certs();
+        let (root_der, leaf_eku_oids_der) =
+            crypto::verify_cose_sign1_es384_x5chain(&certs, &tbs, &env.signature)
+                .expect("verify signature");
+        let leaf_eku_oid_der = leaf_eku_oids_der.first().expect("leaf asserts >= 1 EKU");
+        compute_signer_anchor(&root_der, leaf_eku_oid_der).expect("anchor")
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn peer_corim_resolves_hash_missing_from_destination_local_mapping() {
+        use crate::v2::hex_string_to_bytes;
+
+        let corim_hash = hex_string_to_bytes(CORIM_KNOWN_HASH_HEX).unwrap();
+
+        let verified_dest = base_verified_policy();
+        assert!(verified_dest
+            .servtd_lookup_by_tdinfo_hash(&corim_hash)
+            .is_none());
+
+        let tcb = include_bytes!("../../test/policy_v2/corim/tcb_mapping.cose");
+        let mut verified_peer = base_verified_policy();
+        verified_peer.signer_anchor = signer_anchor_from_cose_sample(tcb);
+        verified_peer
+            .attach_verified_peer_servtd_corim(tcb)
+            .expect("peer corim verifies against the peer's own anchor");
+
+        let hit = verified_peer.servtd_lookup_by_tdinfo_hash(&corim_hash);
+        assert_eq!(
+            hit.expect("peer's own CoRIM resolves its own release")
+                .isvsvn,
+            1
+        );
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn peer_corim_missing_hash_fails_closed() {
+        let tcb = include_bytes!("../../test/policy_v2/corim/tcb_mapping.cose");
+        let mut verified_peer = base_verified_policy();
+        verified_peer.signer_anchor = signer_anchor_from_cose_sample(tcb);
+        verified_peer
+            .attach_verified_peer_servtd_corim(tcb)
+            .unwrap();
+
+        let unknown_hash = [0xAAu8; SHA384_DIGEST_SIZE];
+        assert!(verified_peer
+            .servtd_lookup_by_tdinfo_hash(&unknown_hash)
+            .is_none());
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn attach_peer_corim_rejects_wrong_signer_anchor() {
+        let tcb = include_bytes!("../../test/policy_v2/corim/tcb_mapping.cose");
+        let mut wrong_anchor = signer_anchor_from_cose_sample(tcb);
+        wrong_anchor[0] ^= 0xFF;
+
+        let mut verified_peer = base_verified_policy();
+        verified_peer.signer_anchor = wrong_anchor;
+
+        assert!(verified_peer
+            .attach_verified_peer_servtd_corim(tcb)
+            .is_err());
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn attach_peer_corim_then_local_crl_rejects_revoked_signer() {
+        let tcb = include_bytes!("../../test/policy_v2/corim/revocation/tcb_mapping.cose");
+        let mut verified_peer = base_verified_policy();
+        verified_peer.signer_anchor = signer_anchor_from_cose_sample(tcb);
+        verified_peer
+            .attach_verified_peer_servtd_corim(tcb)
+            .unwrap();
+
+        let local_crl =
+            include_bytes!("../../test/policy_v2/corim/revocation/crl_leaf_revoked.pem");
+        assert!(matches!(
+            verified_peer.verify_signer_chains_not_revoked(local_crl),
+            Err(PolicyError::SignerRevoked)
+        ));
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn rotated_leaf_keys_resolve_to_the_same_signer_anchor() {
+        let anchor_old = compute_signer_anchor_from_chain_pem(include_bytes!(
+            "../../../crypto/test/eku/signer_a.pem"
+        ))
+        .unwrap();
+        let anchor_new = compute_signer_anchor_from_chain_pem(include_bytes!(
+            "../../../crypto/test/eku/signer_b.pem"
+        ))
+        .unwrap();
+        assert_eq!(
+            anchor_old, anchor_new,
+            "rotated leaf keys under the same root+EKU must resolve to the \
+             same anchor, so attach_verified_peer_servtd_corim's decision \
+             never depends on which generation produced the peer's chain"
+        );
+
+        let tcb = include_bytes!("../../test/policy_v2/corim/tcb_mapping.cose");
+        let mut verified_after_rotation = base_verified_policy();
+        verified_after_rotation.signer_anchor = anchor_new;
+        assert!(verified_after_rotation
+            .attach_verified_peer_servtd_corim(tcb)
+            .is_err());
     }
 
     #[test]
