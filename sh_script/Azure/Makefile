@@ -14,6 +14,7 @@ LOG_LEVEL ?= trace
 IGVM_FEATURES_BASE ?= vmcall-raw,stack-guard,main,vmcall-interrupt,oneshot-apic,spdm_attestation
 IGVM_FEATURES_GET_QUOTE = $(IGVM_FEATURES_BASE),igvm-attest
 IGVM_FEATURES_MOCK_QUOTE = $(IGVM_FEATURES_BASE),use-mock-quote
+IGVM_FEATURES_GET_QUOTE_TEST = $(IGVM_FEATURES_GET_QUOTE),test-get-quote
 IGVM_MANIFEST ?= config/Azure/servtd_info.json
 
 .PHONY: pre-build generate-hash generate-hash-v2 generate-hash-v2-verbose generate-hash-verbose
@@ -124,7 +125,7 @@ build-igvm-reject-all: build-igvm-reject generate-hash-v2
 
 # For testing getquote during initialization, no successful migration is expected.
 build-igvm-get-quote: pre-build
-	cd ../../ && cargo image --no-default-features --features $(IGVM_FEATURES_GET_QUOTE) --log-level $(LOG_LEVEL) \
+	cd ../../ && cargo image --no-default-features --features $(IGVM_FEATURES_GET_QUOTE_TEST) --log-level $(LOG_LEVEL) \
 	 --image-format igvm --output $(IGVM_FILE) --debug \
 	 --policy-v2 --policy config/templates/policy_v2_signed.json \
 	 --policy-issuer-chain config/templates/policy_issuer_chain.pem \
