@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use crate::config;
-use anyhow::{Ok, Result};
+use anyhow::{Context, Ok, Result};
 use clap::{Args, ValueEnum};
 use lazy_static::lazy_static;
 use std::{
@@ -17,6 +17,9 @@ const MIGTD_KVM_FEATURES: &str = MIGTD_DEFAULT_FEATURES;
 const DEFAULT_TDVF_IMAGE_NAME: &str = "migtd.bin";
 const DEFAULT_IGVM_IMAGE_NAME: &str = "migtd.igvm";
 const DEFAULT_IMAGE_FORMAT: &str = "tdvf";
+const MIGTD_TD_INFO_GUID: &str = "dbbdfad7-9cba-4aae-b498-c0fd425860b4";
+const MIGTD_MAX_MIGRATION_CHANNEL_COUNT: u32 = 12;
+const MIGTD_MAX_VCPU_COUNT: u32 = 1;
 
 lazy_static! {
     static ref PROJECT_ROOT: &'static Path =
@@ -27,8 +30,12 @@ lazy_static! {
     static ref DEFAULT_CA: PathBuf =
         PROJECT_ROOT.join("config/Intel_SGX_Provisioning_Certification_RootCA.cer");
     static ref DEFAULT_METADATA: PathBuf = PROJECT_ROOT.join("config/metadata.json");
+    static ref DEFAULT_METADATA_NO_TDINFO: PathBuf =
+        PROJECT_ROOT.join("config/metadata_no_tdinfo.json");
     static ref DEFAULT_SHIM_LAYOUT: PathBuf = PROJECT_ROOT.join("config/shim_layout.json");
     static ref DEFAULT_IMAGE_LAYOUT: PathBuf = PROJECT_ROOT.join("config/image_layout.json");
+    static ref DEFAULT_IMAGE_LAYOUT_NO_TDINFO: PathBuf =
+        PROJECT_ROOT.join("config/image_layout_no_tdinfo.json");
     static ref DEFAULT_SERVTD_INFO: PathBuf = PROJECT_ROOT.join("config/servtd_info.json");
     static ref MMIO_LAYOUT_SOURCE: PathBuf = PROJECT_ROOT.join("src/devices/pci/src/layout.rs");
 }
@@ -79,9 +86,29 @@ pub(crate) struct BuildArgs {
     /// Use migration policy v2
     #[clap(long)]
     policy_v2: bool,
-    /// Issuer chain of migration policy v2, required if `policy_v2` is set
+    /// Issuer chain of migration policy v2. Provide this OR `--signer-anchor`
+    /// (at least one is required when `policy_v2` is set).
     #[clap(long)]
     policy_issuer_chain: Option<PathBuf>,
+    /// Security Version Number recorded in the MigTD TD_INFO structure
+    #[clap(long, default_value_t = 1)]
+    td_info_svn: u32,
+    /// Omit TD_INFO for compatibility with VMMs that do not support TDVF Type 7
+    #[clap(long)]
+    no_tdinfo: bool,
+    /// Path of the 48-byte RTMR1 signer anchor to enroll (CoRIM-only form),
+    /// as an alternative to `--policy-issuer-chain`. The full PEM chain is not
+    /// carried in the image; the anchor is measured into RTMR1 identically.
+    /// Requires `policy_v2`.
+    #[clap(long)]
+    signer_anchor: Option<PathBuf>,
+    /// Path of the signed ServTD TCB-mapping CoRIM (`COSE_Sign1`, `.cose`).
+    /// When provided, it is enrolled into the CFV and the `servtd_corim`
+    /// feature is activated so the runtime resolves `hash -> SVN` through the
+    /// CoRIM. Requires `policy_v2`. The CoRIM is not measured, so enrolling it
+    /// does not change the image `tdinfo_hash`.
+    #[clap(long)]
+    servtd_corim: Option<PathBuf>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -134,22 +161,98 @@ impl BuildArgs {
         let migtd = self.build_migtd()?;
         let bin = self.build_final(reset_vector.as_path(), shim.as_path(), migtd.as_path())?;
         self.enroll(bin.as_path())?;
+        self.patch_td_info(bin.as_path())?;
 
         Ok(bin)
     }
 
+    fn patch_td_info(&self, bin: &Path) -> Result<()> {
+        if self.no_tdinfo || self.image_format() != DEFAULT_IMAGE_FORMAT {
+            return Ok(());
+        }
+
+        let payload_path = bin.with_extension("td-info-payload.bin");
+        let mut payload = Vec::with_capacity(8);
+        payload.extend_from_slice(&MIGTD_MAX_MIGRATION_CHANNEL_COUNT.to_le_bytes());
+        payload.extend_from_slice(&MIGTD_MAX_VCPU_COUNT.to_le_bytes());
+        fs::write(&payload_path, payload)?;
+
+        let sh = Shell::new()?;
+        sh.change_dir(SHIM_FOLDER.as_path());
+        let version = self.migtd_version()?;
+        let svn = self.td_info_svn.to_string();
+        let patch_result = cmd!(
+            sh,
+            "cargo run -p td-shim-tools --bin td-shim-patch -- td-info"
+        )
+        .args(["--in", bin.to_str().unwrap()])
+        .args(["--out", bin.to_str().unwrap()])
+        .args(["--guid", MIGTD_TD_INFO_GUID])
+        .args(["--version", version.as_str()])
+        .args(["--svn", svn.as_str()])
+        .args(["--payload-info", payload_path.to_str().unwrap()])
+        .run();
+
+        fs::remove_file(payload_path)?;
+        patch_result?;
+        Ok(())
+    }
+
+    fn migtd_version(&self) -> Result<String> {
+        let sh = Shell::new()?;
+        sh.change_dir(*PROJECT_ROOT);
+        let metadata = cmd!(sh, "cargo metadata --format-version 1 --no-deps").read()?;
+        let metadata: serde_json::Value = serde_json::from_str(&metadata)?;
+        metadata["packages"]
+            .as_array()
+            .and_then(|packages| packages.iter().find(|package| package["name"] == "migtd"))
+            .and_then(|package| package["version"].as_str())
+            .map(ToOwned::to_owned)
+            .context("migtd package version not found in cargo metadata")
+    }
+
     fn check_arguments(&self) -> Result<()> {
+        if !self.no_tdinfo && self.image_format() == DEFAULT_IMAGE_FORMAT && self.td_info_svn == 0 {
+            return Err(anyhow::anyhow!("TD_INFO SVN must be non-zero"));
+        }
+
+        if self.no_tdinfo {
+            self.ensure_td_info_absent(&self.image_layout()?)?;
+            self.ensure_td_info_absent(&self.metadata()?)?;
+        }
+
         if self.policy_v2 {
             if self.policy.is_none() {
                 return Err(anyhow::anyhow!(
                     "policy_v2 is enabled but no policy file is provided"
                 ));
             }
-            if self.policy_issuer_chain.is_none() {
+            if self.policy_issuer_chain.is_none() && self.signer_anchor.is_none() {
                 return Err(anyhow::anyhow!(
-                    "policy_v2 is enabled but no policy_issuer_chain file is provided"
+                    "policy_v2 is enabled but neither --policy-issuer-chain nor --signer-anchor was provided"
                 ));
             }
+        } else if self.servtd_corim.is_some() {
+            return Err(anyhow::anyhow!("--servtd-corim requires --policy-v2"));
+        }
+        Ok(())
+    }
+
+    fn ensure_td_info_absent(&self, path: &Path) -> Result<()> {
+        let content = fs::read_to_string(path)?;
+        let config: serde_json::Value = serde_json::from_str(&content)?;
+        let contains_td_info = config.get("TdInfo").is_some_and(|value| !value.is_null())
+            || config["Sections"].as_array().is_some_and(|sections| {
+                sections
+                    .iter()
+                    .any(|section| section["Type"].as_str() == Some("TdInfo"))
+            });
+
+        if contains_td_info {
+            return Err(anyhow::anyhow!(
+                "{} contains TdInfo and cannot be used with --no-tdinfo",
+                path.display()
+            ));
         }
         Ok(())
     }
@@ -282,15 +385,37 @@ impl BuildArgs {
         ]);
 
         let cmd = if self.policy_v2 {
-            cmd.args(&[
-                "3F2FB27A-9596-431C-A68D-D3EAB39F8AEB",
-                self.policy_issuer_chain()?.to_str().unwrap(),
-            ])
+            // Enroll the RTMR1 signer anchor: prefer the 48-byte anchor slot
+            // (CoRIM-only form) when `--signer-anchor` is given, else the
+            // legacy policy issuer chain PEM.
+            if let Some(anchor) = &self.signer_anchor {
+                let anchor = fs::canonicalize(anchor)?;
+                cmd.args(&[
+                    "2B9D5A84-6F3C-4E71-8A2D-0C7E1F4B6A93",
+                    anchor.to_str().unwrap(),
+                ])
+            } else {
+                cmd.args(&[
+                    "3F2FB27A-9596-431C-A68D-D3EAB39F8AEB",
+                    self.policy_issuer_chain()?.to_str().unwrap(),
+                ])
+            }
         } else {
             cmd.args(&[
                 "CA437832-4C51-4322-B13D-A21BD0C8FFF6",
                 self.root_ca()?.to_str().unwrap(),
             ])
+        };
+
+        // Enroll the optional signed CoRIM under its FFS GUID.
+        let corim_path = self.servtd_corim()?;
+        let cmd = if let Some(corim) = &corim_path {
+            cmd.args(&[
+                "7E5B9C11-2D4A-4F6E-9B3C-1A2B3C4D5E6F",
+                corim.to_str().unwrap(),
+            ])
+        } else {
+            cmd
         };
 
         cmd.args(&["-o", bin.to_str().unwrap()]).run()?;
@@ -331,6 +456,10 @@ impl BuildArgs {
 
         if self.policy_v2 {
             features.push_str(",policy_v2");
+        }
+
+        if self.servtd_corim.is_some() {
+            features.push_str(",servtd_corim");
         }
 
         if let Some(selected) = &self.features {
@@ -411,7 +540,12 @@ impl BuildArgs {
     }
 
     fn metadata(&self) -> Result<PathBuf> {
-        let path = self.metadata.as_ref().unwrap_or(&DEFAULT_METADATA);
+        let default: &Path = if self.no_tdinfo {
+            DEFAULT_METADATA_NO_TDINFO.as_path()
+        } else {
+            DEFAULT_METADATA.as_path()
+        };
+        let path = self.metadata.as_deref().unwrap_or(default);
         fs::canonicalize(path).map_err(|e| e.into())
     }
 
@@ -464,6 +598,14 @@ impl BuildArgs {
         fs::canonicalize(path).map_err(|e| e.into())
     }
 
+    /// Canonicalized path of the signed ServTD TCB-mapping CoRIM, if provided.
+    fn servtd_corim(&self) -> Result<Option<PathBuf>> {
+        match self.servtd_corim.as_ref() {
+            Some(path) => Ok(Some(fs::canonicalize(path)?)),
+            None => Ok(None),
+        }
+    }
+
     fn root_ca(&self) -> Result<PathBuf> {
         let path = self.root_ca.as_ref().unwrap_or(&DEFAULT_CA);
         fs::canonicalize(path).map_err(|e| e.into())
@@ -475,7 +617,12 @@ impl BuildArgs {
     }
 
     fn image_layout(&self) -> Result<PathBuf> {
-        let path = self.image_layout.as_ref().unwrap_or(&DEFAULT_IMAGE_LAYOUT);
+        let default: &Path = if self.no_tdinfo {
+            DEFAULT_IMAGE_LAYOUT_NO_TDINFO.as_path()
+        } else {
+            DEFAULT_IMAGE_LAYOUT.as_path()
+        };
+        let path = self.image_layout.as_deref().unwrap_or(default);
         fs::canonicalize(path).map_err(|e| e.into())
     }
 }

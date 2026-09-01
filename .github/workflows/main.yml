@@ -63,6 +63,15 @@ jobs:
           fi
           $BUILD_CMD
 
+      - name: Build MigTD with CoRIM endorsement support
+        if: matrix.device == 'vmcall-raw' && matrix.policy_version == 'v2' && matrix.protocol == 'spdm' && matrix.build_type == 'release'
+        run: |
+          cargo image --no-default-features \
+            --features stack-guard,vmcall-raw,spdm_attestation,servtd_corim \
+            --policy-v2 \
+            --policy config/templates/policy_v2_signed.json \
+            --policy-issuer-chain config/templates/policy_issuer_chain.pem
+
       - name: Build tools
         run: |
           cargo build -p json-signer

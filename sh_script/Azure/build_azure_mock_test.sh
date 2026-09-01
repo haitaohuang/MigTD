@@ -85,6 +85,7 @@ TOOLS_DIR="$PROJECT_ROOT/target/release"
 # Input Files
 POLICY_DATA_RAW="$SOURCE_MATERIAL_DIR/policy_data_raw.json"
 POLICY_ALLOW_ALL_DATA_RAW="$SOURCE_MATERIAL_DIR/policy_allow_all_data_raw.json"
+POLICY_REJECT_DATA_RAW="$SOURCE_MATERIAL_DIR/policy_reject_data_raw.json"
 TD_IDENTITY_TEMPLATE="$SOURCE_MATERIAL_DIR/td_identity.json"
 TCB_MAPPING_TEMPLATE="$SOURCE_MATERIAL_DIR/tcb_mapping.json"
 COLLATERALS_FILE="$SOURCE_MATERIAL_DIR/collateral_thim.json"
@@ -141,6 +142,7 @@ generate_certificates() {
     local cert_validity_days="${3:-365}"
     local root_ca_subject="${4:-/CN=MigTD Root CA/O=Microsoft Corporation}"
     local leaf_subject="${5:-/CN=MigTD Policy Issuer/O=Microsoft Corporation}"
+    local signer_eku_oid="${MIGTD_SIGNER_EKU_OID:-1.3.6.1.4.1.32473.1.1}"
 
     # Validate key type first
     if [ "$key_type" != "P384" ]; then
@@ -191,7 +193,7 @@ generate_certificates() {
         -days $cert_validity_days \
         -$hash_algo \
         -extensions v3_ca \
-        -extfile <(echo -e "[v3_ca]\nkeyUsage = digitalSignature")
+        -extfile <(printf '[v3_ca]\nkeyUsage = digitalSignature\nextendedKeyUsage = %s\n' "$signer_eku_oid")
 
     # Create certificate chain (leaf + root)
     echo "7. Creating certificate chain..."
@@ -201,12 +203,108 @@ generate_certificates() {
     rm -f "$output_dir/policy_signing.csr"
 }
 
+validate_rotated_leaf_certificates() {
+    local source_dir="$1"
+    local rotated_dir="$2"
+    local source_subject rotated_subject
+    local source_eku rotated_eku
+
+    if ! cmp -s "$source_dir/root_ca.pem" "$rotated_dir/root_ca.pem"; then
+        echo "Error: Rotated leaf does not use the original root CA." >&2
+        exit 1
+    fi
+
+    source_subject=$(openssl x509 -in "$source_dir/policy_signing.pem" \
+        -noout -subject -nameopt RFC2253)
+    rotated_subject=$(openssl x509 -in "$rotated_dir/policy_signing.pem" \
+        -noout -subject -nameopt RFC2253)
+    if [ "$source_subject" != "$rotated_subject" ]; then
+        echo "Error: Rotated leaf Subject Name differs from the original." >&2
+        exit 1
+    fi
+
+    source_eku=$(openssl x509 -in "$source_dir/policy_signing.pem" \
+        -noout -ext extendedKeyUsage)
+    rotated_eku=$(openssl x509 -in "$rotated_dir/policy_signing.pem" \
+        -noout -ext extendedKeyUsage)
+    if [ "$source_eku" != "$rotated_eku" ]; then
+        echo "Error: Rotated leaf extended key usage differs from the original." >&2
+        exit 1
+    fi
+
+    if cmp -s \
+        <(openssl pkey -in "$source_dir/policy_signing.key" -pubout 2>/dev/null) \
+        <(openssl pkey -in "$rotated_dir/policy_signing.key" -pubout 2>/dev/null); then
+        echo "Error: Rotated leaf reused the original public key." >&2
+        exit 1
+    fi
+}
+
+generate_rotated_leaf_certificates() {
+    local source_dir="$1"
+    local output_dir="$2"
+    local curve_name
+    local hash_algo
+    local leaf_subject="/CN=MigTD Policy Issuer/O=Microsoft Corporation"
+    local signer_eku_oid="${MIGTD_SIGNER_EKU_OID:-1.3.6.1.4.1.32473.1.1}"
+
+    for file in root_ca.key root_ca.pem policy_signing.key policy_signing.pem; do
+        if [ ! -f "$source_dir/$file" ]; then
+            echo "Error: Cannot rotate leaf; missing $source_dir/$file" >&2
+            exit 1
+        fi
+    done
+
+    mkdir -p "$output_dir"
+    cp "$source_dir/root_ca.key" "$output_dir/root_ca.key"
+    cp "$source_dir/root_ca.pem" "$output_dir/root_ca.pem"
+
+    curve_name=$(get_curve_name "P384")
+    hash_algo=$(get_hash_algorithm "P384")
+
+    echo "Generating rotated policy signing private key..."
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:$curve_name \
+        -out "$output_dir/policy_signing.key"
+    openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt \
+        -in "$output_dir/policy_signing.key" \
+        -out "$output_dir/policy_signing_pkcs8.key"
+    openssl req -new \
+        -key "$output_dir/policy_signing.key" \
+        -out "$output_dir/policy_signing.csr" \
+        -subj "$leaf_subject"
+    openssl x509 -req \
+        -in "$output_dir/policy_signing.csr" \
+        -CA "$output_dir/root_ca.pem" \
+        -CAkey "$output_dir/root_ca.key" \
+        -CAcreateserial \
+        -out "$output_dir/policy_signing.pem" \
+        -days 365 \
+        -$hash_algo \
+        -extensions v3_ca \
+        -extfile <(printf '[v3_ca]\nkeyUsage = digitalSignature\nextendedKeyUsage = %s\n' "$signer_eku_oid")
+    cat "$output_dir/policy_signing.pem" "$output_dir/root_ca.pem" \
+        > "$output_dir/policy_issuer_chain.pem"
+    rm -f "$output_dir/policy_signing.csr"
+
+    validate_rotated_leaf_certificates "$source_dir" "$output_dir"
+}
+
 # Parse command line arguments
 USE_MOCK_REPORT=false
 MOCK_QUOTE_FILE=""
 FETCH_COLLATERALS=false
 AZURE_REGION="useast"
 ALLOW_ALL=false
+REJECT=false
+CERT_DIR_OVERRIDE=""
+SERVTD_CERT_DIR_OVERRIDE=""
+ROTATE_LEAF_FROM=""
+MEASURED_IMAGE=""
+MEASURED_MANIFEST="$PROJECT_ROOT/config/Azure/servtd_info.json"
+RETAIN_MOCK_REPORT_MAPPING=false
+POLICY_SVN_OVERRIDE=""
+REVOKE_TDINFO_HASHES=()
+TCB_MAPPING_INPUT=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -224,6 +322,10 @@ while [[ $# -gt 0 ]]; do
             ALLOW_ALL=true
             shift
             ;;
+        --reject)
+            REJECT=true
+            shift
+            ;;
         --fetch-collaterals)
             FETCH_COLLATERALS=true
             shift
@@ -232,16 +334,83 @@ while [[ $# -gt 0 ]]; do
             AZURE_REGION="$2"
             shift 2
             ;;
+        --cert-dir)
+            CERT_DIR_OVERRIDE="$2"
+            shift 2
+            ;;
+        --rotate-leaf-from)
+            ROTATE_LEAF_FROM="$2"
+            shift 2
+            ;;
+        --servtd-cert-dir)
+            SERVTD_CERT_DIR_OVERRIDE="$2"
+            shift 2
+            ;;
+        --measured-image)
+            MEASURED_IMAGE="$2"
+            shift 2
+            ;;
+        --measured-manifest)
+            MEASURED_MANIFEST="$2"
+            shift 2
+            ;;
+        --retain-mock-report-mapping)
+            RETAIN_MOCK_REPORT_MAPPING=true
+            shift
+            ;;
+        --policy-svn)
+            POLICY_SVN_OVERRIDE="$2"
+            shift 2
+            ;;
+        --tcb-mapping)
+            TCB_MAPPING_INPUT="$2"
+            shift 2
+            ;;
+        --revoke-tdinfo-hash)
+            REVOKE_TDINFO_HASHES+=("$2")
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo
             echo "Options:"
             echo "  --output-dir DIR             Output directory for generated files (default: config/Azure)"
             echo "  --allow-all                  Use allow-all policy rules (no TCB/platform/servtd checks)"
+            echo "  --reject                     Use reject policy (bad FMSPC — migration will be rejected)"
             echo "  --skip-test                  Skip running the MigTD test at the end"
             echo "  --fetch-collaterals          Fetch fresh collaterals from Azure THIM before generating policy"
             echo "  --azure-region REGION        Azure region for THIM (useast, westus, northeurope)"
             echo "                               (default: useast, applies with --fetch-collaterals)"
+            echo "  --cert-dir DIR               Reuse (or persist) the signing key + issuer chain in DIR"
+            echo "                               instead of a throwaway temp dir. If DIR already contains"
+            echo "                               a key + issuer chain, they are reused as-is (no new"
+            echo "                               certs generated, private key NOT deleted at the end)."
+            echo "                               Needed for a stable RTMR1 across multiple invocations,"
+            echo "                               e.g. the two-phase measure-then-bind tcb_mapping flow."
+            echo "  --rotate-leaf-from DIR       Generate/reuse a new policy leaf key in --cert-dir,"
+            echo "                               signed by DIR's root CA with the same leaf Subject Name."
+            echo "  --servtd-cert-dir DIR        Sign TD identity and TCB mapping collateral with DIR's"
+            echo "                               existing key/chain while the outer policy uses --cert-dir."
+            echo "                               This supports policy-leaf-only key rotation."
+            echo "  --measured-image IGVM        Add the REAL tdinfo_hash of an already-built MigTD IGVM"
+            echo "                               to the cumulative TCB mapping, instead of using"
+            echo "                               the mock report's synthetic values. Pairs with --cert-dir"
+            echo "                               in a two-phase build: (1) build a placeholder-policy image"
+            echo "                               with a persistent cert dir, (2) re-run with --measured-image"
+            echo "                               pointing at that image + the same --cert-dir to bind the real"
+            echo "                               measurements into the signed tcb_mapping/policy."
+            echo "  --measured-manifest FILE     Manifest used to measure --measured-image (default:"
+            echo "                               config/Azure/servtd_info.json)"
+            echo "  --retain-mock-report-mapping Retain the synthetic mock-report tdinfo_hash"
+            echo "                               alongside --measured-image. Required for images"
+            echo "                               built with use-mock-quote: quote-based migration"
+            echo "                               uses the synthetic hash, while rebinding uses"
+            echo "                               the authenticated peer TDREPORT's measured hash."
+            echo "  --policy-svn SVN             Override policySvn before signing (test/release staging)"
+            echo "  --tcb-mapping FILE           Previous authority-maintained mapping to extend"
+            echo "                               (default: existing output, then config/Azure)"
+            echo "  --revoke-tdinfo-hash HASH    Explicitly remove a historical tdinfo_hash"
+            echo "                               from the cumulative mapping (repeatable)"
             echo "  -h, --help                   Show this help message"
             echo
             echo "Examples:"
@@ -261,6 +430,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [ "$RETAIN_MOCK_REPORT_MAPPING" = true ] && [ -z "$MEASURED_IMAGE" ]; then
+    echo -e "${RED}--retain-mock-report-mapping requires --measured-image${NC}" >&2
+    exit 1
+fi
+
 echo "Configuration:"
 echo "  Project root: $PROJECT_ROOT"
 echo "  Source material: $SOURCE_MATERIAL_DIR"
@@ -271,16 +445,31 @@ echo "  Fetch collaterals: $FETCH_COLLATERALS"
 if [ "$FETCH_COLLATERALS" = true ]; then
     echo "  Azure region: $AZURE_REGION"
 fi
+if [ "${#REVOKE_TDINFO_HASHES[@]}" -gt 0 ]; then
+    echo "  Explicit mapping revocations: ${REVOKE_TDINFO_HASHES[*]}"
+fi
+if [ -n "$POLICY_SVN_OVERRIDE" ]; then
+    echo "  Policy SVN override: $POLICY_SVN_OVERRIDE"
+fi
 echo
 
 # Ensure output directory exists
 mkdir -p "$OUTPUT_DIR"
+if [ -n "$CERT_DIR_OVERRIDE" ]; then
+    CERT_DIR="$CERT_DIR_OVERRIDE"
+    PRIVATE_KEY="$CERT_DIR/policy_signing_pkcs8.key"
+fi
+SERVTD_CERT_DIR="${SERVTD_CERT_DIR_OVERRIDE:-$CERT_DIR}"
+SERVTD_PRIVATE_KEY="$SERVTD_CERT_DIR/policy_signing_pkcs8.key"
 mkdir -p "$CERT_DIR"
 
 # Select which policy data file to use
 if [ "$ALLOW_ALL" = true ]; then
     ACTIVE_POLICY_DATA_RAW="$POLICY_ALLOW_ALL_DATA_RAW"
     echo -e "${YELLOW}Using allow-all policy rules (no TCB/platform/servtd checks)${NC}"
+elif [ "$REJECT" = true ]; then
+    ACTIVE_POLICY_DATA_RAW="$POLICY_REJECT_DATA_RAW"
+    echo -e "${YELLOW}Using reject policy (bad FMSPC — migration will be rejected)${NC}"
 else
     ACTIVE_POLICY_DATA_RAW="$POLICY_DATA_RAW"
 fi
@@ -293,12 +482,21 @@ if [ ! -f "$TD_IDENTITY_TEMPLATE" ]; then
 fi
 if [ ! -f "$TCB_MAPPING_TEMPLATE" ]; then
     echo -e "${YELLOW}Generating default tcb_mapping.json template${NC}"
-    printf '{"id":"BB9668CA-4EE8-4523-941A-B3B03BE46E03","version":1,"issueDate":"2025-01-01T00:00:00Z","nextUpdate":"2026-01-01T00:00:00Z","mrSigner":"%s","isvProdId":1,"svnMappings":[{"tdMeasurements":{"mrtd":"%s","rtmr0":"%s","rtmr1":"%s"},"isvsvn":1}]}' \
-        "$(printf '0%.0s' {1..96})" "$(printf '0%.0s' {1..96})" "$(printf '0%.0s' {1..96})" "$(printf '0%.0s' {1..96})" > "$TCB_MAPPING_TEMPLATE"
+    cp "$PROJECT_ROOT/config/templates/tcb_mapping_seed.json" "$TCB_MAPPING_TEMPLATE"
+fi
+
+if [[ -n "$TCB_MAPPING_INPUT" && "$TCB_MAPPING_INPUT" != /* ]]; then
+    TCB_MAPPING_INPUT="$PROJECT_ROOT/$TCB_MAPPING_INPUT"
+fi
+TCB_MAPPING_SOURCE="$TCB_MAPPING_TEMPLATE"
+if [ -n "$TCB_MAPPING_INPUT" ]; then
+    TCB_MAPPING_SOURCE="$TCB_MAPPING_INPUT"
+elif [ -f "$OUTPUT_DIR/tcb_mapping.json" ]; then
+    TCB_MAPPING_SOURCE="$OUTPUT_DIR/tcb_mapping.json"
 fi
 
 # Verify input files exist
-for file in "$ACTIVE_POLICY_DATA_RAW"; do
+for file in "$ACTIVE_POLICY_DATA_RAW" "$TCB_MAPPING_SOURCE"; do
     if [ ! -f "$file" ]; then
         echo -e "${RED}Error: Required input file not found: $file${NC}" >&2
         exit 1
@@ -374,6 +572,9 @@ cargo build --release -p servtd-collateral-generator 2>&1 | grep -E "(Compiling|
 echo "Building migtd-policy-generator..."
 cargo build --release -p migtd-policy-generator 2>&1 | grep -E "(Compiling|Finished|error)" || true
 
+echo "Building migtd-hash..."
+cargo build --release -p migtd-hash 2>&1 | grep -E "(Compiling|Finished|error)" || true
+
 # Verify tools exist
 # Note: azcvm-extract-report is in a different location
 if [ ! -f "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/release/azcvm-extract-report" ]; then
@@ -381,7 +582,7 @@ if [ ! -f "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/relea
     exit 1
 fi
 
-for tool in json-signer servtd-collateral-generator migtd-policy-generator; do
+for tool in json-signer servtd-collateral-generator migtd-policy-generator migtd-hash; do
     if [ ! -f "$TOOLS_DIR/$tool" ]; then
         echo -e "${RED}Error: Tool '$tool' not found at $TOOLS_DIR/$tool${NC}" >&2
         exit 1
@@ -428,6 +629,23 @@ MRSIGNER=$(jq -r '.mrsigner // "000000000000000000000000000000000000000000000000
 ISV_PROD_ID=$(jq -r '.isvProdId // 0' "$REPORT_DATA_FILE")
 ISVSVN=$(jq -r '.isvsvn // 1' "$REPORT_DATA_FILE")
 
+# Select the source for the current release's tdinfo_hash. TD identity fields
+# continue to come from the report; only the TCB mapping uses the measured
+# image when requested.
+MAPPING_MEASUREMENT_ARGS=(--from-report "$REPORT_DATA_FILE")
+if [ -n "$MEASURED_IMAGE" ]; then
+    # Resolve to absolute paths since we're running from $TEMP_DIR.
+    MEASURED_IMAGE_ABS="$MEASURED_IMAGE"
+    [[ "$MEASURED_IMAGE_ABS" = /* ]] || MEASURED_IMAGE_ABS="$PROJECT_ROOT/$MEASURED_IMAGE"
+    MEASURED_MANIFEST_ABS="$MEASURED_MANIFEST"
+    [[ "$MEASURED_MANIFEST_ABS" = /* ]] || MEASURED_MANIFEST_ABS="$PROJECT_ROOT/$MEASURED_MANIFEST"
+    MAPPING_MEASUREMENT_ARGS=(
+        --manifest "$MEASURED_MANIFEST_ABS"
+        --image "$MEASURED_IMAGE_ABS"
+    )
+    echo -e "${YELLOW}Using real tdinfo_hash measured from: $MEASURED_IMAGE${NC}"
+fi
+
 echo "Extracted measurements:"
 echo "  MRTD: ${MRTD:0:32}..."
 echo "  RTMR0: ${RTMR0:0:32}..."
@@ -441,30 +659,82 @@ echo
 # Make sure no ending newline is added (important for signing)
 #
 echo -e "${BLUE}=== Step 3: Updating TD Identity Template ===${NC}"
-# Set tcbDate and issueDate to current time so they satisfy the policy's
-# servtd tcbDate reference (which uses an absolute date).
-CURRENT_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+# Conditionally update tcbDate and issueDate only when they are behind the
+# policy's servtd tcbDate reference (greater-or-equal check).
+POLICY_TCB_REF=$(jq -r '
+  [.policy[] | .servtd.migtdIdentity.tcbDate.reference // empty] |
+  map(select(. != "")) | max // empty
+' "$ACTIVE_POLICY_DATA_RAW" 2>/dev/null)
+
+DATE_UPDATES=""
+if [ -n "$POLICY_TCB_REF" ]; then
+    CURRENT_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    TEMPLATE_TCB_DATE=$(jq -r '.tcbLevels[0].tcbDate' "$TD_IDENTITY_TEMPLATE")
+    TEMPLATE_ISSUE_DATE=$(jq -r '.issueDate' "$TD_IDENTITY_TEMPLATE")
+    if [[ "$TEMPLATE_TCB_DATE" < "$POLICY_TCB_REF" ]]; then
+        DATE_UPDATES="$DATE_UPDATES | .tcbLevels[0].tcbDate = \"$CURRENT_UTC\""
+        echo -e "  Updating tcbDate: $TEMPLATE_TCB_DATE -> $CURRENT_UTC (reference: $POLICY_TCB_REF)"
+    fi
+    if [[ "$TEMPLATE_ISSUE_DATE" < "$POLICY_TCB_REF" ]]; then
+        DATE_UPDATES="$DATE_UPDATES | .issueDate = \"$CURRENT_UTC\""
+        echo -e "  Updating issueDate: $TEMPLATE_ISSUE_DATE -> $CURRENT_UTC (reference: $POLICY_TCB_REF)"
+    fi
+fi
+
 jq -c ".xfam = \"$XFAM\" | .attributes = \"$ATTRIBUTES\" | .mrConfigId = \"$MR_CONFIG_ID\" | \
 .mrOwner = \"$MR_OWNER\" | .mrOwnerConfig = \"$MR_OWNER_CONFIG\" | .mrsigner = \"$MRSIGNER\" | \
-.isvProdId = $ISV_PROD_ID | .tcbLevels[0].tcb.isvsvn = $ISVSVN | \
-.tcbLevels[0].tcbDate = \"$CURRENT_UTC\" | .issueDate = \"$CURRENT_UTC\"" \
+.isvProdId = $ISV_PROD_ID | .tcbLevels[0].tcb.isvsvn = $ISVSVN $DATE_UPDATES" \
 "$TD_IDENTITY_TEMPLATE" | tr -d '\n' > "$TD_IDENTITY_UPDATED"
 
 echo -e "${GREEN}✓ TD Identity updated: $TD_IDENTITY_UPDATED${NC}"
 echo
 
 #
-# Step 4: Update tcb_mapping.json with extracted measurements
+# Step 4: Update the cumulative tcb_mapping.json with the v2 tdinfo_hash
 # Make sure no ending newline is added (important for signing)
 #
-echo -e "${BLUE}=== Step 4: Updating TCB Mapping Template ===${NC}"
-jq -c ".svnMappings[0].tdMeasurements.mrtd = \"$MRTD\" | \
-.svnMappings[0].tdMeasurements.rtmr0 = \"$RTMR0\" | \
-.svnMappings[0].tdMeasurements.rtmr1 = \"$RTMR1\" | \
-.svnMappings[0].isvsvn = $ISVSVN" \
-"$TCB_MAPPING_TEMPLATE" | tr -d '\n' > "$TCB_MAPPING_UPDATED"
+# The Rust helper retains all supported historical hashes, replaces the
+# current hash by key, rejects conflicting duplicates, applies only explicit
+# revocations, and emits deterministic compact JSON for signing. It computes
+# the hash through the same migtd-hash path used by the release pipeline.
+#
+echo -e "${BLUE}=== Step 4: Updating Cumulative TCB Mapping ===${NC}"
+
+TDINFO_HASH_FILE="$TEMP_DIR/tdinfo_hash.hex"
+MAPPING_UPDATE_SOURCE="$TCB_MAPPING_SOURCE"
+if [ "$RETAIN_MOCK_REPORT_MAPPING" = true ]; then
+    MOCK_MAPPING_UPDATED="$TEMP_DIR/tcb_mapping_with_mock_report.json"
+    MOCK_TDINFO_HASH_FILE="$TEMP_DIR/mock_tdinfo_hash.hex"
+    "$TOOLS_DIR/migtd-hash" \
+        --policy-v2 \
+        --from-report "$REPORT_DATA_FILE" \
+        --output-tdinfo-hash "$MOCK_TDINFO_HASH_FILE" \
+        --update-tcb-mapping "$TCB_MAPPING_SOURCE" \
+        --output-tcb-mapping "$MOCK_MAPPING_UPDATED" \
+        --mapping-isvsvn "$ISVSVN"
+    MAPPING_UPDATE_SOURCE="$MOCK_MAPPING_UPDATED"
+    MOCK_TDINFO_HASH=$(tr 'a-z' 'A-Z' < "$MOCK_TDINFO_HASH_FILE")
+    echo -e "  retaining mock-report tdinfo_hash = $MOCK_TDINFO_HASH"
+fi
+MAPPING_UPDATE_ARGS=(
+    --update-tcb-mapping "$MAPPING_UPDATE_SOURCE"
+    --output-tcb-mapping "$TCB_MAPPING_UPDATED"
+    --mapping-isvsvn "$ISVSVN"
+)
+for hash in "${REVOKE_TDINFO_HASHES[@]}"; do
+    MAPPING_UPDATE_ARGS+=(--revoke-tdinfo-hash "$hash")
+done
+"$TOOLS_DIR/migtd-hash" \
+    --policy-v2 \
+    "${MAPPING_MEASUREMENT_ARGS[@]}" \
+    --output-tdinfo-hash "$TDINFO_HASH_FILE" \
+    "${MAPPING_UPDATE_ARGS[@]}"
+# Uppercase to match the convention used by signed policies.
+TDINFO_HASH=$(tr 'a-z' 'A-Z' < "$TDINFO_HASH_FILE")
 
 echo -e "${GREEN}✓ TCB Mapping updated: $TCB_MAPPING_UPDATED${NC}"
+echo -e "  history source = $TCB_MAPPING_SOURCE"
+echo -e "  tdinfo_hash = $TDINFO_HASH"
 echo
 
 #
@@ -481,9 +751,24 @@ echo
 # Step 5: Generate certificates and signing key
 #
 echo -e "${BLUE}=== Step 5: Generating Certificates ===${NC}"
-generate_certificates "$CERT_DIR" "P384" 365
+if [ -n "$ROTATE_LEAF_FROM" ] &&
+   [ -f "$PRIVATE_KEY" ] &&
+   [ -f "$CERT_DIR/policy_issuer_chain.pem" ]; then
+    echo "Reusing rotated certificate chain + signing key in: $CERT_DIR"
+    validate_rotated_leaf_certificates "$ROTATE_LEAF_FROM" "$CERT_DIR"
+elif [ -n "$ROTATE_LEAF_FROM" ]; then
+    generate_rotated_leaf_certificates "$ROTATE_LEAF_FROM" "$CERT_DIR"
+elif [ -n "$CERT_DIR_OVERRIDE" ] && [ -f "$PRIVATE_KEY" ] && [ -f "$CERT_DIR/policy_issuer_chain.pem" ]; then
+    echo "Reusing existing certificate chain + signing key in: $CERT_DIR"
+else
+    generate_certificates "$CERT_DIR" "P384" 365
+fi
 
 echo -e "${GREEN}✓ Certificates generated in: $CERT_DIR${NC}"
+if [ ! -f "$SERVTD_PRIVATE_KEY" ] || [ ! -f "$SERVTD_CERT_DIR/policy_issuer_chain.pem" ]; then
+    echo "Error: ServTD signing key/chain not found in: $SERVTD_CERT_DIR" >&2
+    exit 1
+fi
 echo
 
 #
@@ -493,7 +778,7 @@ echo -e "${BLUE}=== Step 6: Signing TD Identity ===${NC}"
 "$TOOLS_DIR/json-signer" \
     --sign \
     --name "tdIdentity" \
-    --private-key "$PRIVATE_KEY" \
+    --private-key "$SERVTD_PRIVATE_KEY" \
     --input "$TD_IDENTITY_UPDATED" \
     --output "$TD_IDENTITY_SIGNED"
 
@@ -507,7 +792,7 @@ echo -e "${BLUE}=== Step 7: Signing TCB Mapping ===${NC}"
 "$TOOLS_DIR/json-signer" \
     --sign \
     --name "tdTcbMapping" \
-    --private-key "$PRIVATE_KEY" \
+    --private-key "$SERVTD_PRIVATE_KEY" \
     --input "$TCB_MAPPING_UPDATED" \
     --output "$TCB_MAPPING_SIGNED"
 
@@ -518,8 +803,8 @@ echo
 # Step 8: Generate servtd_collateral.json
 #
 echo -e "${BLUE}=== Step 8: Generating ServTD Collateral ===${NC}"
-IDENTITY_CHAIN="$CERT_DIR/policy_issuer_chain.pem"
-MAPPING_CHAIN="$CERT_DIR/policy_issuer_chain.pem"
+IDENTITY_CHAIN="$SERVTD_CERT_DIR/policy_issuer_chain.pem"
+MAPPING_CHAIN="$SERVTD_CERT_DIR/policy_issuer_chain.pem"
 
 "$TOOLS_DIR/servtd-collateral-generator" \
     --identity "$TD_IDENTITY_SIGNED" \
@@ -540,6 +825,14 @@ echo -e "${BLUE}=== Step 9: Merging Policy Data ===${NC}"
     --collaterals "$COLLATERALS_FILE" \
     --servtd-collateral "$SERVTD_COLLATERAL" \
     --output "$POLICY_DATA_MERGED"
+
+if [ -n "$POLICY_SVN_OVERRIDE" ]; then
+    POLICY_DATA_WITH_SVN="$TEMP_DIR/policy_data_with_svn.json"
+    jq -c --argjson svn "$POLICY_SVN_OVERRIDE" \
+        '.policySvn = $svn' \
+        "$POLICY_DATA_MERGED" | tr -d '\n' > "$POLICY_DATA_WITH_SVN"
+    mv "$POLICY_DATA_WITH_SVN" "$POLICY_DATA_MERGED"
+fi
 
 echo -e "${GREEN}✓ Policy data merged: $POLICY_DATA_MERGED${NC}"
 echo
@@ -571,7 +864,9 @@ echo
 # Step 12: Securely delete private key
 #
 echo -e "${BLUE}=== Step 12: Cleaning Up Private Key ===${NC}"
-if [ -f "$PRIVATE_KEY" ]; then
+if [ -n "$CERT_DIR_OVERRIDE" ]; then
+    echo -e "${YELLOW}Keeping private key (--cert-dir reuse requested): $PRIVATE_KEY${NC}"
+elif [ -f "$PRIVATE_KEY" ]; then
     shred -u "$PRIVATE_KEY" 2>/dev/null || rm -f "$PRIVATE_KEY"
     echo -e "${GREEN}✓ Private key securely deleted${NC}"
 fi

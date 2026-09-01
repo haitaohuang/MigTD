@@ -73,6 +73,9 @@ cet-shstk = ["td-payload/cet-shstk"]
 coverage = ["minicov"]
 main = ["attestation", "policy/log", "sha2"]
 policy_v2 = ["policy/policy_v2", "attestation/attest-lib-ext", "td-shim-interface-emu?/policy_v2"]
+# Opt-in CoRIM-based hash endorsement for servtd collateral. Additive on top
+# of policy_v2; without it the legacy JSON collateral path is used unchanged.
+servtd_corim = ["policy_v2", "policy/servtd_corim"]
 stack-guard = ["td-payload/stack-guard"]
 virtio-vsock = ["vsock/virtio-vsock"]
 virtio-serial = ["virtio_serial"]
@@ -85,6 +88,8 @@ test_stack_size = ["td-benchmark"]
 test_disable_ra_and_accept_all = ["attestation/test", "tdx-tdcall-emu?/test_mock_report"] # Dangerous: test-only RA bypass; blocked in release (see src/lib.rs)
 spdm_attestation = ["main"]
 test_mock_report = ["AzCVMEmu", "tdx-tdcall-emu/test_mock_report"]  # Use mock TD report in AzCVMEmu mode
+igvm-attest = ["attestation/igvm-attest"]
+test-get-quote = []
 use-mock-quote = ["attestation/use-mock-quote"]  # Use mock quote and mock TD report for non-AzCVMEmu testing
 mock_quote_retry = ["AzCVMEmu", "tdx-tdcall-emu/mock_quote_retry"]
 AzCVMEmu = [
@@ -101,7 +106,6 @@ AzCVMEmu = [
 	"td-logger-emu",            # Use console-based td-logger shim
 	"tokio",
 ]
-igvm-attest = ["attestation/igvm-attest"]
 
 [patch.crates-io]
 sys_time = { path = "src/std-support/sys_time" }

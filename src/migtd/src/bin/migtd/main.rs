@@ -10,9 +10,9 @@ extern crate alloc;
 use core::future::poll_fn;
 use core::task::Poll;
 
-#[cfg(feature = "policy_v2")]
-use alloc::string::String;
 use alloc::vec::Vec;
+#[cfg(feature = "policy_v2")]
+use alloc::{format, string::String};
 use log::info;
 #[cfg(feature = "vmcall-raw")]
 use log::{debug, Level};
@@ -74,7 +74,7 @@ fn dump_td_info_and_hash() {
     hasher.update(td_report.td_info.as_bytes());
 
     let hash = hasher.finalize();
-    debug!("TD Info Hash: {:x}\n", hash);
+    info!("TD Info Hash: {:x}\n", hash);
 }
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -140,7 +140,7 @@ pub fn runtime_main() {
     #[cfg(feature = "vmcall-raw")]
     {
         log::info!("log::max_level() = {}\n", log::max_level());
-        if log::max_level() >= Level::Debug {
+        if log::log_enabled!(Level::Info) {
             dump_td_info_and_hash();
         }
     }
@@ -275,67 +275,92 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
 
     let version = initialize_policy();
 
-    // Per GHCI 1.5: Verify own TDINFO.MROWNER/MROWNERCONFIG matches policy key/SVN
-    // Skip in AzCVMEmu mode — emulator uses mock TD reports where VMM does not
-    // populate MROWNER/MROWNERCONFIG.
-    #[cfg(not(feature = "AzCVMEmu"))]
-    {
-        use migtd::mig_policy;
-        if let Err(e) = mig_policy::verify_own_tdinfo() {
-            log::error!("TDINFO policy binding verification failed: {:?}\n", e);
-            panic_with_guest_crash_reg_report(
-                MigrationResult::InvalidPolicyError as u64,
-                b"TDINFO MROWNER/MROWNERCONFIG mismatch with policy",
-            );
-        }
-    }
-
     let event_data = version.as_bytes();
 
-    // Measure and extend the migration policy to RTMR
+    // Hash canonical policyData while keeping updateable JSON endorsements
+    // outside RTMR2. CoRIM-only policyData is measured in full. The event-log
+    // entry's `tagged_event_data` payload stays small
+    // (`version.as_bytes()`) to keep CCEL bounded; the full canonical bytes
+    // are only fed into the digest.
+    //
+    // The buffer hashed here MUST be byte-identical to what
+    // `policy::v2::policy::check_policy_integrity` and `migtd-hash` (offline
+    // RTMR2 simulator) compute, otherwise valid peers fail event-log
+    // integrity verification.
+    let policy_data_bytes = match migtd::policy::extract_canonical_policy_data_bytes(policy) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log::error!("Failed to extract canonical policyData bytes: {:?}\n", e);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InvalidPolicyError as u64,
+                b"Failed to extract canonical policyData bytes",
+            );
+        }
+    };
     let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY,
-        policy,
-        TAGGED_EVENT_ID_POLICY,
+        &policy_data_bytes,
+        TAGGED_EVENT_ID_POLICY_DATA,
         event_data,
     )
     .map_err(|e| {
-        log::error!("Failed to log migration policy: {:?}\n", e);
+        log::error!("Failed to log policyData: {:?}\n", e);
         panic_with_guest_crash_reg_report(
             MigrationResult::InitializationError as u64,
-            b"Failed to log migration policy",
+            b"Failed to log policyData",
         );
     });
 }
 
 #[cfg(feature = "policy_v2")]
 fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
-    // Read policy issuer chain from CFV
-    let policy_issuer_chain = match config::get_policy_issuer_chain() {
-        Some(policy_issuer_chain) => policy_issuer_chain,
+    // Signer-anchor source from CFV: the 48-byte anchor slot (CoRIM-only
+    // enrollment) when present, else the legacy policy issuer chain PEM.
+    let anchor_source = match config::get_signer_anchor_source() {
+        Some(anchor_source) => anchor_source,
         None => {
-            log::error!("Fail to get policy issuer chain from CFV\n");
+            log::error!("Fail to get policy signer anchor / issuer chain from CFV\n");
             panic_with_guest_crash_reg_report(
                 MigrationResult::InvalidPolicyError as u64,
-                b"Fail to get policy issuer chain from CFV",
+                b"Fail to get policy signer anchor from CFV",
             );
         }
     };
 
-    // Measure and extend the policy issuer chain to RTMR
+    // RTMR1 is extended with the SHA384 signer anchor, not the entire PEM
+    // blob. The anchor is derived from the root CA fingerprint and the leaf
+    // certificate's dedicated signer EKU, with a domain-separation tag, so it
+    // is stable across PEM formatting changes and intermediate reissuance.
+    // When the 48-byte anchor is enrolled directly, `resolve_signer_anchor`
+    // returns it as-is, yielding the same RTMR1 value as the PEM-derived form.
+    let signer_anchor = match migtd::policy::resolve_signer_anchor(anchor_source) {
+        Ok(a) => a,
+        Err(e) => {
+            log::error!("Failed to resolve signer anchor: {:?}\n", e);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InvalidPolicyError as u64,
+                b"Failed to resolve policy signer anchor",
+            );
+        }
+    };
+
+    // `write_tagged_event_log` hashes the supplied bytes (signer_anchor) and
+    // extends RTMR1 with that digest. The recorded event still carries the
+    // anchor source (48-byte anchor or full PEM) as `tagged_event_data` so a
+    // verifier can re-derive A.
     let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY_ISSUER_CHAIN,
-        policy_issuer_chain,
+        &signer_anchor,
         TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN,
-        policy_issuer_chain,
+        anchor_source,
     )
     .map_err(|e| {
-        log::error!("Failed to log policy issuer chain: {:?}\n", e);
+        log::error!("Failed to log policy signer anchor: {:?}\n", e);
         panic_with_guest_crash_reg_report(
             MigrationResult::InitializationError as u64,
-            b"Failed to log policy issuer chain",
+            b"Failed to log policy signer anchor",
         );
     });
 }
@@ -395,26 +420,28 @@ fn initialize_policy() -> String {
             );
         }
     };
-    let policy_issuer_chain = match config::get_policy_issuer_chain() {
+    let policy_issuer_chain = match config::get_signer_anchor_source() {
         Some(chain) => chain,
         None => {
-            log::error!("Fail to get policy issuer chain from CFV\n");
+            log::error!("Fail to get policy signer anchor / issuer chain from CFV\n");
             panic_with_guest_crash_reg_report(
                 MigrationResult::InvalidPolicyError as u64,
-                b"Fail to get policy issuer chain from CFV",
+                b"Fail to get policy signer anchor from CFV",
             );
         }
     };
     // Initialize and verify the migration policy
-    let version = mig_policy::init_policy(policy, policy_issuer_chain).map_err(|e| {
-        log::error!("Failed to initialize migration policy: {:?}\n", e);
-        panic_with_guest_crash_reg_report(
-            MigrationResult::InvalidPolicyError as u64,
-            b"Failed to initialize migration policy",
-        );
-    });
-
-    version.expect("Failed to initialize migration policy")
+    match mig_policy::init_policy(policy, policy_issuer_chain) {
+        Ok(version) => version,
+        Err(e) => {
+            let message = format!("Failed to initialize migration policy: {:?}", e);
+            log::error!("{}\n", message);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InvalidPolicyError as u64,
+                message.as_bytes(),
+            );
+        }
+    }
 }
 
 fn handle_pre_mig() {
@@ -525,20 +552,20 @@ fn handle_pre_mig() {
                                 log::error!(
                                     migration_request_id = rebinding_info.mig_request_id; "Failure during rebinding status code: {:x}\n", status.clone() as u8);
                             }
-                            let _ =
-                                report_status(status as u8, rebinding_info.mig_request_id, &data)
-                                    .await
-                                    .map_err(|e| {
-                                        log::error!(
-                                            migration_request_id = rebinding_info.mig_request_id;
-                                            "Failed to report status for StartRebinding: {:?}\n",
-                                            e
-                                        );
-                                    });
-                            log::trace!(
-                                migration_request_id = rebinding_info.mig_request_id;
-                                "ReportStatus for rebinding completed\n"
-                            );
+                            match report_status(status as u8, rebinding_info.mig_request_id, &data)
+                                .await
+                            {
+                                Ok(()) => log::trace!(
+                                    migration_request_id = rebinding_info.mig_request_id;
+                                    "Reported rebinding result status code: {:x}\n",
+                                    status as u8
+                                ),
+                                Err(e) => log::error!(
+                                    migration_request_id = rebinding_info.mig_request_id;
+                                    "Failed to report status for StartRebinding: {:?}\n",
+                                    e
+                                ),
+                            }
                             REQUESTS.lock().remove(&rebinding_info.mig_request_id);
                         }
                         WaitForRequestResponse::GetTdReport(wfr_info) => {
