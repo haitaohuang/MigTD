@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-//! CoRIM-based hash endorsement: decodes the wire format produced by the
-//! host-side `mig-td-tools` signer and resolves a `tdinfo_hash` to a
-//! [`ServtdLookup`] (the MigTD ISV SVN). This is the only alternative to the
-//! legacy JSON collateral; the legacy path stays unchanged from the one-hash
-//! redesign.
+//! CoRIM-based hash endorsement: decodes the signed TCB-mapping CoRIM generated
+//! during a MigTD production release (referred to as the "producer" below) and
+//! resolves a `tdinfo_hash` to a [`ServtdLookup`] (the MigTD ISV SVN). This is
+//! the only alternative to the legacy JSON collateral; the legacy path stays
+//! unchanged from the one-hash redesign.
 //!
 //! # One document
 //!
@@ -49,7 +49,7 @@ use corim::{
         comid::ComidTag,
         environment::EnvironmentMap,
         measurement::{MeasurementMap, SvnChoice},
-        signed::{decode_signed_corim, CoseAlgorithm},
+        signed::{decode_signed_corim, CoseAlgorithm, CwtClaims},
         triples::ConditionalEndorsementSeriesTriple,
     },
     validate::decode_and_validate_at,
@@ -62,11 +62,11 @@ use crate::{
     PolicyError,
 };
 
-// ---- Wire-format constants (must match `mig-td-tools::types::servtd`) ------
+// ---- MigTD CoRIM wire-format constants -----------------------------------
 
 /// Component class for both documents: `class = { vendor: "Intel",
-/// model: "TDX" }` (no `class-id`). The producer switched from a
-/// shared class-id UUID to this vendor/model class.
+/// model: "TDX" }` (no `class-id`). The producer switched from a shared
+/// class-id UUID to this vendor/model class.
 pub const CLASS_VENDOR: &str = "Intel";
 /// See [`CLASS_VENDOR`].
 pub const CLASS_MODEL: &str = "TDX";
@@ -202,6 +202,10 @@ fn verify_and_extract_payload(
     let envelope =
         decode_signed_corim(cose).map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
+    if has_cwt_time_claims(envelope.protected.cwt_claims.as_ref()) {
+        return Err(PolicyError::SignatureVerificationFailed);
+    }
+
     // Only ECDSA-P384/SHA-384 is supported by the crypto crate. Accept both
     // the deprecated polymorphic ES384 (-35, what the producer emits today)
     // and its fully-specified RFC 9864 replacement ESP384 (-51).
@@ -241,6 +245,10 @@ fn verify_and_extract_payload(
         .ok_or(PolicyError::SignatureVerificationFailed)?;
     let signer_chain = certs.iter().map(|cert| cert.to_vec()).collect();
     Ok((payload, signer_chain))
+}
+
+fn has_cwt_time_claims(claims: Option<&CwtClaims>) -> bool {
+    matches!(claims, Some(claims) if claims.nbf.is_some() || claims.exp.is_some())
 }
 
 // ---- Environment matching --------------------------------------------------
@@ -314,6 +322,7 @@ mod test {
             corim::CorimId,
             environment::{ClassMap, EnvironmentMap},
             measurement::{Digest, MeasurementValuesMap},
+            signed::SignedCorimBuilder,
             triples::{CesCondition, ConditionalSeriesRecord, ReferenceTriple},
         },
     };
@@ -433,13 +442,13 @@ mod test {
         assert!(provider.lookup_by_tdinfo_hash(&[0xAA; 32]).is_none());
     }
 
-    /// Interop regression: decode the inner CoRIM payload from the real
-    /// pipeline-signed `mig-td-tools` sample (envelope stripped) and resolve
-    /// the endorsed release `347c6170…79286384 -> svn 1`.
+    /// Interop regression: decode the inner CoRIM payload from a real
+    /// pipeline-signed sample (envelope stripped) and resolve the endorsed
+    /// release `347c6170…79286384 -> svn 1`.
     #[test]
-    fn interop_with_mig_td_tools_producer() {
+    fn interop_with_producer() {
         let tcb = include_bytes!("../../test/policy_v2/corim/tcb_mapping.cbor");
-        let provider = ServtdCorim::decode(tcb, 0).expect("decode producer CBOR");
+        let provider = ServtdCorim::decode(tcb, 0).expect("decode producer CoRIM CBOR");
 
         let mut hash = [0u8; 48];
         hex_decode(
@@ -455,11 +464,32 @@ mod test {
         assert!(provider.lookup_by_tdinfo_hash(&[0xCC; 48]).is_none());
     }
 
-    /// End-to-end with the real signed `COSE_Sign1` sample emitted by the
-    /// `mig-td-tools` pipeline: verify the envelope's ES384 signature +
-    /// `x5chain`, bind the signer to the RTMR1 signer anchor, then resolve a
-    /// hash. The sample endorses a single release: `347c6170…79286384 ->
-    /// svn 1`.
+    #[test]
+    fn rejects_cwt_nbf_and_exp_claims() {
+        assert!(!has_cwt_time_claims(Some(&CwtClaims::new("test-signer"))));
+        assert!(has_cwt_time_claims(Some(
+            &CwtClaims::new("test-signer").with_nbf(1)
+        )));
+        assert!(has_cwt_time_claims(Some(
+            &CwtClaims::new("test-signer").with_exp(-1)
+        )));
+
+        let payload = build_tcb_mapping(&[(hash(0xAA), 5)]);
+        let claims = CwtClaims::new("test-signer").with_nbf(1).with_exp(-1);
+        let cose = SignedCorimBuilder::new(CoseAlgorithm::Es384, payload)
+            .set_cwt_claims(claims)
+            .build_with_signature(vec![0; 96])
+            .expect("build signed CoRIM");
+        assert!(matches!(
+            verify_and_extract_payload(&cose, &[0; SHA384_DIGEST_SIZE]),
+            Err(PolicyError::SignatureVerificationFailed)
+        ));
+    }
+
+    /// End-to-end with a real signed `COSE_Sign1` pipeline sample: verify the
+    /// envelope's ES384 signature + `x5chain`, bind the signer to the RTMR1
+    /// signer anchor, then resolve a hash. The sample endorses a single
+    /// release: `347c6170…79286384 -> svn 1`.
     #[test]
     fn interop_with_signed_cose_samples() {
         let tcb = include_bytes!("../../test/policy_v2/corim/tcb_mapping.cose");
