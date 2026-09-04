@@ -6,6 +6,7 @@ key_dir="./key"
 
 environment="${1:-pre-production}"
 tcb_mapping_file="${2:-}"
+servtd_crl_file="${3:-}"
 case "$environment" in
   pre-production|preprod)
     collateral_file="collateral_pre_production_fmspc.json"
@@ -14,14 +15,18 @@ case "$environment" in
     collateral_file="collateral_production_fmspc.json"
     ;;
   *)
-    echo "Usage: $0 <pre-production|production> <cumulative-tcb-mapping.json>"
+    echo "Usage: $0 <pre-production|production> <cumulative-tcb-mapping.json> <servtd-crl.pem>"
     exit 1
     ;;
 esac
 
 echo "Selected collateral environment '$environment' using $collateral_file"
-if [[ -z "$tcb_mapping_file" ]]; then
-  echo "Usage: $0 <pre-production|production> <cumulative-tcb-mapping.json>" >&2
+if [[ -z "$tcb_mapping_file" || -z "$servtd_crl_file" ]]; then
+  echo "Usage: $0 <pre-production|production> <cumulative-tcb-mapping.json> <servtd-crl.pem>" >&2
+  exit 1
+fi
+if [[ ! -s "$servtd_crl_file" ]]; then
+  echo "A nonempty signed servTD CRL is required: $servtd_crl_file" >&2
   exit 1
 fi
 if ! jq -e '.svnMappings | type == "array" and length > 0' "$tcb_mapping_file" >/dev/null; then
@@ -58,6 +63,7 @@ cargo build -p servtd-collateral-generator
   --identity $config_temp_dir/td_identity_signed.json \
   --identity-chain $key_dir/migtd_issuer_chain.pem \
   --mapping $config_temp_dir/tcb_mapping_signed.json \
+  --servtd-crl "$servtd_crl_file" \
   -o $config_temp_dir/servtd_collateral.json
 
 # Build migtd-policy-generator and generate policy_v2.json
