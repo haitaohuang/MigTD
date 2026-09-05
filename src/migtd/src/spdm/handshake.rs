@@ -56,10 +56,9 @@ pub(super) async fn requester_handshake_prelude(
 /// 3. Run `rsp_handle_message` until the session ends.
 ///
 /// This helper does NOT zeroize `app_context_data_buffer` itself: the buffer
-/// may carry the caller's ephemeral private key, which must be wiped on
-/// *every* return path (including errors), so callers wrap this helper in
-/// their own always-zeroize pattern (see `spdm_responder_transfer_msk` /
-/// `spdm_responder_rebind_new`).
+/// may carry the caller's ephemeral private key, so callers hold an
+/// `AppContextGuard` across the await to wipe it on success, error, or
+/// cancellation (see `spdm_responder_transfer_msk` / `spdm_responder_rebind_new`).
 ///
 /// Callers that need to expose extra context to VDM handlers (e.g. setting
 /// `spdm_responder_ex.info = RebindInformation(..)`) must do so before
