@@ -167,6 +167,12 @@ pub async fn spdm_responder_transfer_msk<'a>(
     exchange_information: &'a ExchangeInformation,
     #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
+    let guard = super::AppContextGuard {
+        context: spdm_responder_ex,
+        buffer: |context| &mut context.responder_context.common.app_context_data_buffer,
+    };
+    let spdm_responder_ex = &mut *guard.context;
+
     #[cfg(not(feature = "policy_v2"))]
     let peer_data = Vec::new();
 
@@ -184,20 +190,8 @@ pub async fn spdm_responder_transfer_msk<'a>(
         private_key: PrivateKeyDer::default(),
     };
 
-    // Zeroize the responder key buffer on every return path.
-    let result = crate::spdm::handshake::run_responder_message_loop(
-        spdm_responder_ex,
-        peer_data,
-        app_context,
-    )
-    .await;
-    spdm_responder_ex
-        .responder_context
-        .common
-        .app_context_data_buffer
-        .zeroize();
-
-    result
+    crate::spdm::handshake::run_responder_message_loop(spdm_responder_ex, peer_data, app_context)
+        .await
 }
 
 pub async fn rsp_handle_message(spdm_responder: &mut ResponderContext) -> Result<(), SpdmStatus> {
