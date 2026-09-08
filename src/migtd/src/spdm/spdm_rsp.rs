@@ -169,7 +169,7 @@ pub async fn spdm_responder_transfer_msk<'a>(
 ) -> Result<(), SpdmStatus> {
     let guard = super::AppContextGuard {
         context: spdm_responder_ex,
-        buffer: |context| &mut context.responder_context.common.app_context_data_buffer,
+        common: |context| &mut context.responder_context.common,
     };
     let spdm_responder_ex = &mut *guard.context;
 
@@ -180,6 +180,7 @@ pub async fn spdm_responder_transfer_msk<'a>(
         mig_info,
         exchange_information,
     };
+    spdm_responder_ex.mig_info_exchanged = false;
     spdm_responder_ex.remote_information = None;
 
     // The VDM handler reads `mig_info` / `exchange_information` from
@@ -209,17 +210,7 @@ pub async fn rsp_handle_message(spdm_responder: &mut ResponderContext) -> Result
 
         match res {
             Ok(Ok(_)) => {}
-            Ok(Err(spdm_status)) => {
-                if spdm_status.severity == StatusSeverity::ERROR
-                    && matches!(spdm_status.status_code, StatusCode::VDM(_))
-                {
-                    return Err(spdm_status);
-                }
-                if spdm_status == SPDM_STATUS_INVALID_STATE_LOCAL {
-                    // Terminate the responder upon invalid state.
-                    return Err(spdm_status);
-                }
-            }
+            Ok(Err(spdm_status)) => return Err(spdm_status),
             Err(_) => return Err(SPDM_STATUS_RECEIVE_FAIL),
         }
 

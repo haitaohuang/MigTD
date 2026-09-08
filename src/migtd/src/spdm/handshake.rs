@@ -57,8 +57,9 @@ pub(super) async fn requester_handshake_prelude(
 ///
 /// This helper does NOT zeroize `app_context_data_buffer` itself: the buffer
 /// may carry the caller's ephemeral private key, so callers hold an
-/// `AppContextGuard` across the await to wipe it on success, error, or
-/// cancellation (see `spdm_responder_transfer_msk` / `spdm_responder_rebind_new`).
+/// `AppContextGuard` across the await to wipe it and retire session keys on
+/// success, error, or cancellation (see `spdm_responder_transfer_msk` /
+/// `spdm_responder_rebind_new`).
 ///
 /// Callers that need to expose extra context to VDM handlers (e.g. setting
 /// `spdm_responder_ex.info = RebindInformation(..)`) must do so before
