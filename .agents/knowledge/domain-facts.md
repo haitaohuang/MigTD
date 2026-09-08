@@ -56,6 +56,15 @@ bypassed under which build feature.
 - Hold `spdm::AppContextGuard` across migration and rebind exchanges so dropping
   either role's future wipes the buffer. Keep cancellation coverage for all
   four entry points in `src/migtd/src/spdm/tests.rs`.
+- SPDM `FINISH` clears `runtime_info.last_session_id` while the established
+  session still holds keys. Retire every exchange-owned `SpdmContext::session`
+  slot on return or cancellation, not just the last handshake ID
+  (`deps/spdm-rs/spdmlib/src/requester/finish_req.rs`, `responder/context.rs`;
+  upstream cleanup: `7b40eccb`).
+- The guard also tears down those slots before `finalize_spdm_session` attempts
+  transport shutdown. Shutdown must run on protocol failure or timeout without
+  replacing the primary error. Keep the teardown assertions for both roles,
+  handshaking/established states, cancellation, and repeated cleanup.
 
 ## TDINFO / MROwner / MROwnerConfig semantics
 
