@@ -31,6 +31,15 @@ ar crs "$firmware" "$test_root/exit_stubs.o" \
     "$test_root/tlibc_stub.o" "$test_root/sgxssl_stub.o"
 firmware_hash="$(sha256sum "$firmware")"
 
+cat >"$test_root/crypto.c" <<'EOF'
+#include <stdio.h>
+extern int atexit(void (*callback)(void));
+static void c_exit(void) { puts("host C exit callback ran"); }
+int crypto_register_exit(void) { return atexit(c_exit); }
+EOF
+gcc -c "$test_root/crypto.c" -o "$test_root/crypto.o"
+ar crs "$test_root/libcrypto.a" "$test_root/crypto.o"
+
 cat >"$test_root/probe.c" <<'EOF'
 #include <errno.h>
 #include <stdio.h>
@@ -38,16 +47,16 @@ cat >"$test_root/probe.c" <<'EOF'
 
 extern int servtd_fixture(void);
 extern int *__errno(void);
+extern int crypto_register_exit(void);
 extern int __cxa_atexit(void (*callback)(void *), void *argument, void *dso);
 
-static void c_exit(void) { puts("host C exit callback ran"); }
 static void cxx_exit(void *argument) { puts((const char *)argument); }
 
 int main(void)
 {
     if (servtd_fixture() != 7 || __errno() != &errno)
         return 1;
-    if (atexit(c_exit) != 0 ||
+    if (crypto_register_exit() != 0 ||
         __cxa_atexit(cxx_exit, (void *)"host C++ exit callback ran", NULL) != 0)
         return 1;
     return 0;
@@ -72,11 +81,24 @@ for attempt in 1 2; do
         echo "error: application archive still exports enclave exit stubs" >&2
         exit 1
     fi
-    gcc "$test_root/probe.c" -lc "$application" -o "$test_root/probe"
-    if [[ "$("$test_root/probe")" != $'host C++ exit callback ran\nhost C exit callback ran' ]]; then
-        echo "error: host libc exit callbacks did not run" >&2
-        exit 1
-    fi
+    for build_script in "$script_dir/build.rs" "$repo_root/src/migtd/build.rs"; do
+        mapfile -t native_links < <(
+            sed -n 's/^[[:space:]]*println!("cargo:rustc-link-arg=\(-l[^"]*\)");/\1/p' "$build_script"
+        )
+        if [[ ${#native_links[@]} == 0 ]]; then
+            echo "error: native link directives missing from $build_script" >&2
+            exit 1
+        fi
+        # Cargo suppresses implicit libraries; GNU ld cannot resolve late
+        # libcrypto references by rescanning an earlier libc archive like LLD.
+        gcc -fuse-ld=bfd -nodefaultlibs "$test_root/probe.c" \
+            -Wl,--as-needed -lc -L"$library_dir" -L"$test_root" \
+            "${native_links[@]}" -o "$test_root/probe"
+        if [[ "$("$test_root/probe")" != $'host C++ exit callback ran\nhost C exit callback ran' ]]; then
+            echo "error: host libc exit callbacks did not run" >&2
+            exit 1
+        fi
+    done
 done
 
 mkdir -p "$test_root/bin"

@@ -58,6 +58,10 @@ must use libc's handlers: exporting the stubs can conflict with
 firmware archive must remain unchanged. The neighboring
 `test-fixup-libservtd-attest-lib.sh` checks both callbacks, archive integrity,
 repeatability, and fatal `objcopy` errors in CI and the local gauntlet.
+The native link directives in both build scripts must put `-lc` after
+`-lcrypto`: GNU ld cannot resolve a late static OpenSSL `atexit` reference
+by rescanning the earlier libc archive, unlike LLD. The regression extracts
+those directives and links with GNU ld and `-nodefaultlibs` to cover this.
 
 ## Manual run requires two env vars
 
