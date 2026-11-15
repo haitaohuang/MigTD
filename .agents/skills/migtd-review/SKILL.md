@@ -79,9 +79,9 @@ A previous review pass produced a "fix" (`bc99fa4`) that removed the `+1`, passe
 ## 2. Codebase essentials
 
 - **MANDATORY first step after fresh checkout / submodule update**: run `bash sh_script/preparation.sh`. This:
-  1. Invokes `deps/td-shim/sh_script/preparation.sh` (td-shim's own prep).
-  2. Applies the spdm-rs ring patches (`0003-introduce-EphemeralPrivateKey-serialization.patch` and `0004-Introduce-digest-de-serialization.patch` from `deps/spdm-rs/external/patches/ring/`) to `deps/td-shim/library/ring`. MigTD's workspace-level `[patch.crates-io]` selects this ring copy, not spdm-rs's copy. The patches add `EphemeralPrivateKey::export_private_key_bytes`/`from_private_key_bytes` and `digest::Context::to_bytes`/`from_bytes`, which spdmlib needs to preserve intermediate SPDM context.
-  3. Runs `deps/spdm-rs/sh_script/pre-build.sh`.
+  1. Applies `td-shim-symcrypt.patch` for native crypto, measurement hashing, and interrupt-state preservation.
+  2. Applies `spdm-symcrypt-provider.patch` for the shared provider registry and compatible feature/dependency selection.
+  3. Recognizes already-applied patches without resetting submodules. It no longer invokes the upstream ring preparation scripts.
   CI does this automatically via `.github/actions/setup-build-environment` (default `run-preparation: true`). Locally you MUST run it manually after any `git clean -fdx`, `git submodule update`, or fresh clone. Failing to run it produces build errors that look like a real baseline regression but are not. See [`doc/dependency_preparation.md`](../../../doc/dependency_preparation.md) for the dependency-resolution rationale.
 - **Build profiles vary**. Always confirm scope before flagging code as buggy. Default in-scope set used during the audit:
   - `vmcall-raw, stack-guard, main, vmcall-interrupt, oneshot-apic, spdm_attestation, igvm-attest, policy_v2`
@@ -99,7 +99,7 @@ A previous review pass produced a "fix" (`bc99fa4`) that removed the `+1`, passe
 - **Build (AzCVMEmu host harness)**: see §6.
 - Bigger build cmd (matrix): `.github/workflows/main.yml`.
 - Architectural facts:
-  - `ring::pkcs8::Document` in **this fork** is stack-inlined `[u8; 185]` + `len`, NOT heap-allocated → `sensitive_data_cleanup` works as intended.
+  - `crypto::ecdsa::EcdsaPk` owns a zeroizing PKCS8 vector and a native SymCrypt key. The encoded P384 key still fits SPDM's 185-byte application buffer; both native key destruction and application-context cleanup must wipe their separate copies.
   - `verify_quote_integrity_ex` is a C-library built from source as a submodule.
   - Policy v2 supports a JSON servTD-collateral path (PEM chain derives the
     RTMR1 anchor) and a CoRIM-only path (direct 48-byte anchor + signed
@@ -199,9 +199,9 @@ What each stage covers (the commands the script runs are the source of truth):
 |---|---|---|
 | `.github/workflows/format.yml` | `format` | `cargo fmt -- --check`, `cargo check`, `cargo clippy --features stack-guard,virtio-vsock,virtio-serial,vmcall-interrupt` (no `-D warnings`) |
 | `.github/workflows/deny.yml` | `deny` | `cargo deny check advisories`, `cargo deny check sources` (continue-on-error), `cargo deny check bans` |
-| `.github/workflows/library.yml` | `library` | `cargo xtask lib-build`, `cargo xtask lib-test` |
-| `.github/workflows/main.yml` | `main` | 32 `cargo image` builds = 4 devices × 2 policy_versions × 2 protocols × 2 build_types |
-| `.github/workflows/integration-emu.yml` | `emu` | Artifact/verifier and CoRIM policy-contract checks plus all 18 workflow scenarios and an additional CoRIM rebind regression (19 total), including asymmetric lookup and fail-closed signer revocation |
+| `.github/workflows/library.yml` | `library` | Selected crypto dependency closures, `cargo xtask lib-build`, `cargo xtask lib-test`, and patched shim library tests |
+| `.github/workflows/main.yml` | `main` | 32 `cargo image` builds = 4 devices × 2 policy_versions × 2 protocols × 2 build_types, plus six native tool packages |
+| `.github/workflows/integration-emu.yml` | `emu` | Artifact/verifier and CoRIM policy-contract checks plus all 20 workflow scenarios and an additional CoRIM rebind regression (21 total), including asymmetric lookup and fail-closed signer revocation |
 
 **Note**: the format.yml clippy step uses a *different* feature set than the in-scope set above (`stack-guard,virtio-vsock,virtio-serial,vmcall-interrupt`). Both must compile cleanly; the former is what runs in CI and gates merges.
 

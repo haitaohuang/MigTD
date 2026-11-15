@@ -41,8 +41,14 @@ jobs:
         with:
           rust-toolchain: '1.88.0' # for spdm-rs
 
+      - name: Check selected cryptographic dependencies
+        run: python3 sh_script/check_crypto_dependencies.py
+
       - name: Build library crates
         run: cargo xtask lib-build
       
       - name: Test library crates
         run: cargo xtask lib-test
+
+      - name: Test patched shim libraries
+        run: cargo test --locked --manifest-path deps/td-shim/Cargo.toml --lib -p cc-measurement -p td-exception -p td-shim -p td-shim-tools

@@ -8,9 +8,8 @@ use crate::{
         data::MigrationSessionKey, session::ExchangeInformation, MigtdMigrationInformation,
     },
     spdm::{
-        build_report_data, gen_quote_spdm, spdm_rsp::SECRET_ASYM_IMPL_INSTANCE, spdm_verify_quote,
-        verify_report_data_binding, verify_tdreport_data_binding, vmcall_msg::VmCallTransportEncap,
-        *,
+        build_report_data, gen_quote_spdm, spdm_verify_quote, verify_report_data_binding,
+        verify_tdreport_data_binding, vmcall_msg::VmCallTransportEncap, *,
     },
 };
 use async_io::{AsyncRead, AsyncWrite};
@@ -36,6 +35,7 @@ use zeroize::Zeroizing;
 pub fn spdm_requester<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>(
     stream: T,
 ) -> Result<(RequesterContext, SpdmDeviceIoArc<T>), SpdmStatus> {
+    super::init_crypto()?;
     let transport = MigtdTransport { transport: stream };
     let device_io = Arc::new(Mutex::new(transport));
     let device_io_ref = device_io.clone();
@@ -80,8 +80,6 @@ pub fn spdm_requester<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>
     // Initialize the RequesterContext
     let requester_context =
         RequesterContext::new(device_io, transport_encap, config_info, provision_info);
-
-    spdmlib::secret::asym_sign::register(SECRET_ASYM_IMPL_INSTANCE.clone());
 
     Ok((requester_context, device_io_ref))
 }

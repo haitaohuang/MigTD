@@ -86,6 +86,7 @@ pub unsafe fn upcast_mut(inner: &mut ResponderContext) -> &mut ResponderContextE
 pub fn spdm_responder<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>(
     stream: T,
 ) -> Result<(ResponderContextEx<'a>, SpdmDeviceIoArc<T>), SpdmStatus> {
+    super::init_crypto()?;
     let transport = MigtdTransport { transport: stream };
     let device_io = Arc::new(Mutex::new(transport));
     let device_io_ref = device_io.clone();
@@ -138,8 +139,6 @@ pub fn spdm_responder<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'sta
         vendor_defined_request_handler_ex: migtd_vdm_msg_rsp_dispatcher_ex,
         vdm_handle: 0,
     });
-    spdmlib::secret::asym_sign::register(SECRET_ASYM_IMPL_INSTANCE.clone());
-
     let responder_context_ex = ResponderContextEx {
         responder_context,
         peer_data: Vec::new(),
@@ -1366,38 +1365,24 @@ fn asym_sign(
 ) -> Option<SpdmSignatureStruct> {
     match (base_hash_algo, base_asym_algo) {
         (SpdmBaseHashAlgo::TPM_ALG_SHA_384, SpdmBaseAsymAlgo::TPM_ALG_ECDSA_ECC_NIST_P384) => {
-            sign_ecdsa_asym_algo(
-                spdm_context,
-                &ring::signature::ECDSA_P384_SHA384_FIXED_SIGNING,
-                data,
-            )
+            sign_ecdsa_asym_algo(spdm_context, data)
         }
         _ => None,
     }
 }
 
-fn sign_ecdsa_asym_algo(
-    spdm_context: &SpdmContext,
-    algorithm: &'static ring::signature::EcdsaSigningAlgorithm,
-    data: &[u8],
-) -> Option<SpdmSignatureStruct> {
+fn sign_ecdsa_asym_algo(spdm_context: &SpdmContext, data: &[u8]) -> Option<SpdmSignatureStruct> {
     let reader = &mut Reader::init(&spdm_context.app_context_data_buffer);
     let responder_app_context = SpdmAppContextData::read(reader)?;
     let private_key = &responder_app_context.private_key;
-    let key_bytes = &private_key.data[..private_key.data_size as usize];
-    let rng = ring::rand::SystemRandom::new();
-    let key_pair: ring::signature::EcdsaKeyPair =
-        ring::signature::EcdsaKeyPair::from_pkcs8(algorithm, key_bytes, &rng).ok()?;
-    let rng = ring::rand::SystemRandom::new();
-
-    let signature = key_pair.sign(&rng, data).ok()?;
-    let signature = signature.as_ref();
+    let key_bytes = private_key.data.get(..private_key.data_size as usize)?;
+    let signature = crypto::ecdsa::ecdsa_sign_fixed(key_bytes, data).ok()?;
 
     let mut full_signature: [u8; SPDM_MAX_ASYM_SIG_SIZE] = [0u8; SPDM_MAX_ASYM_SIG_SIZE];
     if full_signature.len() < signature.len() || signature.len() > u16::MAX as usize {
         return None;
     }
-    full_signature[..signature.len()].copy_from_slice(signature);
+    full_signature[..signature.len()].copy_from_slice(&signature);
 
     Some(SpdmSignatureStruct {
         data_size: signature.len() as u16,

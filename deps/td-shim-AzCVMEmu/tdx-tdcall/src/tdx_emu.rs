@@ -197,7 +197,7 @@ pub fn set_emulated_start_rebinding(
 /// check passes.
 fn populate_servtd_fields(binding_handle: u64, target_td_uuid: [u64; 4]) {
     use crate::tdreport_emu::tdcall_report_emulated;
-    use sha2::{Digest, Sha384};
+    use symcrypt_core::hash::Algorithm;
 
     let dummy_data = [0u8; 64];
     let report = match tdcall_report_emulated(&dummy_data) {
@@ -217,7 +217,13 @@ fn populate_servtd_fields(binding_handle: u64, target_td_uuid: [u64; 4]) {
     };
     // Per TDX module spec: init_servtd_info_hash = SHA384(TDINFO masked by
     // servtd_attr). With servtd_attr=0 (production), no masking is applied.
-    let servtd_info_hash: [u8; 48] = Sha384::digest(td_info_bytes).into();
+    let servtd_info_hash = match Algorithm::Sha384.digest(td_info_bytes) {
+        Ok(hash) => hash,
+        Err(error) => {
+            error!("AzCVMEmu: Failed to hash ServTD info: {:?}", error);
+            return;
+        }
+    };
 
     let servtd_attr: u64 = 0;
 

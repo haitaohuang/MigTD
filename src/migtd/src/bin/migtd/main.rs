@@ -123,6 +123,21 @@ pub fn runtime_main() {
         let _ = create_logarea();
     }
 
+    // SAFETY: TD startup installed XMM-preserving handlers; EMU uses the host ABI.
+    if unsafe { td_shim::crypto::initialize() }.is_err() {
+        panic_with_guest_crash_reg_report(
+            MigrationResult::InitializationError as u64,
+            b"Failed to initialize SymCrypt",
+        );
+    }
+    #[cfg(feature = "spdm_attestation")]
+    if migtd::spdm::init_crypto().is_err() {
+        panic_with_guest_crash_reg_report(
+            MigrationResult::InitializationError as u64,
+            b"Failed to register the SPDM crypto provider",
+        );
+    }
+
     // Dump basic information of MigTD
     basic_info();
 

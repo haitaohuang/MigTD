@@ -75,11 +75,11 @@ pub fn build_td_info_unmasked(
     };
 
     if igvmformat {
-        td_info.build_igvmmrtd(&mut image);
+        td_info.build_igvmmrtd(&mut image)?;
     } else {
-        td_info.build_mrtd(&mut image, MIGTD_IMAGE_SIZE);
+        td_info.build_mrtd(&mut image, MIGTD_IMAGE_SIZE)?;
     }
-    td_info.build_rtmr_with_seperator(0);
+    td_info.build_rtmr_with_seperator(0)?;
 
     let mut cfv = vec![0u8; CONFIG_VOLUME_SIZE];
     image.seek(SeekFrom::Start(0))?;

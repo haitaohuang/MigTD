@@ -6,8 +6,18 @@
 //! It includes quote parsing utilities for TD quotes in both v4 and v5 formats.
 
 use log::{debug, error};
-use sha2::{Digest, Sha384};
+use symcrypt_core::hash::Algorithm;
 use tdx_tdcall::tdreport::{ReportMac, ReportType, TdInfo, TdxReport, TeeTcbInfo};
+
+fn digest_sha384(data: &[u8]) -> [u8; 48] {
+    match Algorithm::Sha384
+        .digest(data)
+        .and_then(|hash| hash.try_into().map_err(|_| symcrypt_core::Error::InvalidLength))
+    {
+        Ok(hash) => hash,
+        Err(error) => panic!("Failed to hash mock TD report: {:?}", error),
+    }
+}
 
 /// Quote header size (48 bytes)
 const QUOTE_HEADER_SIZE: usize = 48;
@@ -307,8 +317,8 @@ pub fn create_mock_td_report(quote_data: &[u8]) -> TdxReport {
     };
 
     // Compute SHA384 hashes of td_info and tee_tcb_info for report_mac integrity
-    let tee_tcb_info_hash: [u8; 48] = Sha384::digest(tee_tcb_info.as_bytes()).into();
-    let tee_info_hash: [u8; 48] = Sha384::digest(td_info.as_bytes()).into();
+    let tee_tcb_info_hash = digest_sha384(tee_tcb_info.as_bytes());
+    let tee_info_hash = digest_sha384(td_info.as_bytes());
 
     let td_report = TdxReport {
         report_mac: ReportMac {

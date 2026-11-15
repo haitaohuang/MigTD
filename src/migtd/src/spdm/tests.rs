@@ -12,6 +12,62 @@ use std::cell::Cell;
 
 struct WipeCheckingAllocator;
 
+#[test]
+fn symcrypt_provider_uses_the_encoded_spdm_identity() {
+    use crypto::ecdsa::{ecdsa_verify_with_raw_public_key, EcdsaPk};
+    use spdmlib::protocol::{SpdmBaseAsymAlgo, SpdmBaseHashAlgo};
+
+    let (mut requester, _) = spdm_requester(TestTransport { fail_read: false }).unwrap();
+    init_crypto().unwrap();
+    assert!(!spdmlib::crypto::asym_verify::register(
+        spdm_crypto_symcrypt::certificates::ASYM_VERIFY.clone()
+    ));
+
+    let key = EcdsaPk::new().unwrap();
+    let app_context = SpdmAppContextData {
+        migration_info: MigtdMigrationInformation::default(),
+        private_key: PrivateKeyDer::from(key.private_key()),
+    };
+    app_context
+        .encode(&mut Writer::init(
+            &mut requester.common.app_context_data_buffer,
+        ))
+        .unwrap();
+    let message = b"SPDM key exchange signature input";
+    let signature = spdmlib::secret::asym_sign::sign(
+        &requester.common,
+        SpdmBaseHashAlgo::TPM_ALG_SHA_384,
+        SpdmBaseAsymAlgo::TPM_ALG_ECDSA_ECC_NIST_P384,
+        message,
+    )
+    .unwrap();
+    assert_eq!(signature.data_size, 96);
+    let signature = &signature.data[..signature.data_size as usize];
+    ecdsa_verify_with_raw_public_key(&key.public_key().unwrap(), message, signature).unwrap();
+    assert!(
+        ecdsa_verify_with_raw_public_key(&key.public_key().unwrap(), b"changed", signature)
+            .is_err()
+    );
+
+    let invalid = SpdmAppContextData {
+        migration_info: MigtdMigrationInformation::default(),
+        private_key: PrivateKeyDer::from(b"invalid private key".as_slice()),
+    };
+    invalid
+        .encode(&mut Writer::init(
+            &mut requester.common.app_context_data_buffer,
+        ))
+        .unwrap();
+    assert!(spdmlib::secret::asym_sign::sign(
+        &requester.common,
+        SpdmBaseHashAlgo::TPM_ALG_SHA_384,
+        SpdmBaseAsymAlgo::TPM_ALG_ECDSA_ECC_NIST_P384,
+        message,
+    )
+    .is_none());
+    requester.common.app_context_data_buffer.zeroize();
+}
+
 #[global_allocator]
 static ALLOCATOR: WipeCheckingAllocator = WipeCheckingAllocator;
 

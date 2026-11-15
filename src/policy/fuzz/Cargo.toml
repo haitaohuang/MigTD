@@ -24,9 +24,6 @@ fuzz = ["afl"]
 [dependencies.policy]
 path = ".."
 
-[patch.crates-io]
-ring = { path = "../../../deps/td-shim/library/ring" }
-
 # Prevent this from interfering with workspaces
 [workspace]
 members = ["."]

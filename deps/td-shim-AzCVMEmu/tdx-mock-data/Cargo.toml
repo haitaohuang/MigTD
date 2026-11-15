@@ -10,7 +10,10 @@ license = "BSD-2-Clause-Patent"
 # Use the original tdx-tdcall for types
 tdx-tdcall = { path = "../../td-shim/tdx-tdcall" }
 log = { version = "0.4", default-features = false }
-sha2 = { version = "0.10", default-features = false }
+symcrypt-core = { git = "https://github.com/haitaohuang/rust-symcrypt-static", rev = "52a32af1703584dd0bcd688ed38cf561d470b9ef", default-features = false }
+
+[target.'cfg(not(target_os = "none"))'.dependencies]
+symcrypt-core = { git = "https://github.com/haitaohuang/rust-symcrypt-static", rev = "52a32af1703584dd0bcd688ed38cf561d470b9ef", default-features = false, features = ["std"] }
 
 [features]
 default = []

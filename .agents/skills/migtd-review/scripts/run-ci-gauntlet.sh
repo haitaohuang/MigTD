@@ -221,8 +221,11 @@ fi
 # Mirrors .github/workflows/library.yml.
 if stage_should_run library; then
     banner library
+    step crypto-dependencies python3 sh_script/check_crypto_dependencies.py
     step lib-build cargo xtask lib-build
     step lib-test cargo xtask lib-test
+    step shim-libraries cargo test --locked --manifest-path deps/td-shim/Cargo.toml \
+        --lib -p cc-measurement -p td-exception -p td-shim -p td-shim-tools
 fi
 
 # ============================================================ STAGE: main
@@ -258,6 +261,10 @@ if stage_should_run main; then
                 done
             done
         done
+    done
+    for tool in json-signer migtd-collateral-generator migtd-hash \
+        migtd-policy-generator migtd-policy-verifier servtd-collateral-generator; do
+        step "tools-${tool}" cargo build -p "$tool"
     done
 fi
 

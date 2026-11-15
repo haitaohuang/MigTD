@@ -26,6 +26,8 @@ Canonical source: [doc/release.md](../../doc/release.md).
 - `Cargo.lock` (locks dependency versions — see
   [reproducible-build.md](reproducible-build.md) for why this matters for MRTD
   stability).
+- [`doc/SymCrypt-NOTICES.txt`](../../doc/SymCrypt-NOTICES.txt) alongside binaries
+  containing the statically linked wrapper and native SymCrypt.
 - For policy v2, firmware, producers, enrollment, and `migtd-hash --policy-v2`
   must agree on the root-certificate/full Subject DN/dedicated-EKU anchor,
   excluding SAN. Generate the anchor, build the image, and endorse its complete

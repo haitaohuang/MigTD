@@ -205,6 +205,10 @@ npm exec --yes --package @mermaid-js/mermaid-cli@11.17.0 -- \
 
 ## Static component structure
 
+The diagram's `ring` label predates the [static SymCrypt integration](../../doc/dependency_preparation.md).
+The current crypto facade, SPDM, and optional TLS provider use native SymCrypt;
+the Intel QVL/SGXSSL path is unchanged.
+
 Solid arrows show component use or a labeled interface. Dashed arrows
 show boot handoff, shared runtime support, or interrupt notification, not
 additional threads. The runtime foundation supports all payload components;
@@ -1372,7 +1376,7 @@ and [`RA-TLS certificate construction/verification`](../../src/migtd/src/ratls/s
 | Peer data transport | [`migration/transport.rs`](../../src/migtd/src/migration/transport.rs) selects [`VmcallRaw`](../../src/devices/vmcall_raw/src/stream.rs); [`transport/vmcall.rs`](../../src/devices/vmcall_raw/src/transport/vmcall.rs) implements GHCI Send/Receive |
 | Attestation | [`igvmattest.rs::get_quote_igvm`](../../src/attestation/src/igvmattest.rs), [`attest.rs::verify_quote_with_collaterals`](../../src/attestation/src/attest.rs); [`attestation/build.rs`](../../src/attestation/build.rs) selects and links ServTD verification |
 | Policy / measured configuration | [`mig_policy.rs::init_policy`, `authenticate_remote`, `authenticate_rebinding_common`](../../src/migtd/src/mig_policy.rs); [`policy::v2::policy`](../../src/policy/src/v2/policy.rs), [`config.rs`](../../src/migtd/src/config.rs), [`event_log.rs`](../../src/migtd/src/event_log.rs) |
-| Crypto | [`src/crypto`](../../src/crypto) supplies hashing, ECDSA P-384, and certificate/CRL handling; SPDM also uses ring, while the C verifier links its own SgxSSL crypto |
+| Crypto | [`src/crypto`](../../src/crypto) supplies hashing, ECDSA P-384, and certificate/CRL handling through static SymCrypt; SPDM and optional TLS use the same backend, while the C verifier retains its own SGXSSL crypto |
 | Image build / enrollment | [`xtask/src/build.rs::build`, `features`, `build_final`, `enroll`](../../xtask/src/build.rs) |
 | Offline policy / hash tools | [`migtd-policy-generator`](../../tools/migtd-policy-generator), [`migtd-hash`](../../tools/migtd-hash); [Policy v2 Generation Workflow](policy-v2-workflow.md) |
 

@@ -2,6 +2,5 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-pub mod ecdsa;
-pub mod hash;
+pub use crate::{ecdsa, hash};
 pub mod tls;

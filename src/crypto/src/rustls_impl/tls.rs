@@ -12,10 +12,6 @@ use connection::{TlsClientConnection, TlsConnectionError, TlsServerConnection};
 use pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::ResolvesClientCert;
-use rustls::crypto::ring::cipher_suite::TLS13_AES_256_GCM_SHA384;
-use rustls::crypto::ring::default_provider;
-use rustls::crypto::ring::kx_group::SECP384R1;
-use rustls::crypto::ring::sign::any_ecdsa_type;
 use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::server::{ClientHello, ResolvesServerCert};
@@ -23,6 +19,7 @@ use rustls::sign::{CertifiedKey, SigningKey};
 use rustls::time_provider::TimeProvider;
 use rustls::version::TLS13;
 use rustls::{ClientConfig, ServerConfig};
+use rustls_symcrypt::SUPPORTED_SIG_ALGS;
 extern crate alloc;
 
 use crate::{Error, Result};
@@ -163,7 +160,7 @@ impl TlsConfig {
         stream: T,
     ) -> Result<SecureChannel<T>> {
         let client_config = ClientConfig::builder_with_details(
-            Arc::new(crypto_provider()),
+            Arc::new(crypto_provider()?),
             Arc::new(TlsTimeProvider {}),
         )
         .with_protocol_versions(&[&TLS13])
@@ -185,7 +182,7 @@ impl TlsConfig {
         stream: T,
     ) -> Result<SecureChannel<T>> {
         let server_config = ServerConfig::builder_with_details(
-            Arc::new(crypto_provider()),
+            Arc::new(crypto_provider()?),
             Arc::new(TlsTimeProvider {}),
         )
         .with_protocol_versions(&[&TLS13])
@@ -200,11 +197,12 @@ impl TlsConfig {
     }
 }
 
-pub(crate) fn crypto_provider() -> CryptoProvider {
-    let mut provider = default_provider();
-    provider.cipher_suites = vec![TLS13_AES_256_GCM_SHA384];
-    provider.kx_groups = vec![SECP384R1];
-    provider
+pub(crate) fn crypto_provider() -> Result<CryptoProvider> {
+    rustls_symcrypt::provider().map_err(|error| {
+        Error::SetupTlsContext(rustls::Error::General(format!(
+            "SymCrypt initialization: {error}"
+        )))
+    })
 }
 
 #[derive(Debug)]
@@ -219,9 +217,14 @@ impl Resolver {
     }
 
     fn certified_key(&self) -> Option<Arc<dyn SigningKey>> {
-        let private_key =
-            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(self.signing_key.private_key()));
-        any_ecdsa_type(&private_key).ok()
+        let private_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+            self.signing_key.private_key().to_vec(),
+        ));
+        crypto_provider()
+            .ok()?
+            .key_provider
+            .load_private_key(private_key)
+            .ok()
     }
 }
 
@@ -293,12 +296,7 @@ impl ServerCertVerifier for Verifier {
         cert: &CertificateDer<'_>,
         dss: &rustls::DigitallySignedStruct,
     ) -> core::result::Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &default_provider().signature_verification_algorithms,
-        )
+        verify_tls13_signature(message, cert, dss, &SUPPORTED_SIG_ALGS)
     }
 
     fn verify_tls12_signature(
@@ -307,18 +305,11 @@ impl ServerCertVerifier for Verifier {
         cert: &CertificateDer<'_>,
         dss: &rustls::DigitallySignedStruct,
     ) -> core::result::Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &default_provider().signature_verification_algorithms,
-        )
+        verify_tls12_signature(message, cert, dss, &SUPPORTED_SIG_ALGS)
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
+        SUPPORTED_SIG_ALGS.supported_schemes()
     }
 }
 
@@ -347,12 +338,7 @@ impl ClientCertVerifier for Verifier {
         cert: &CertificateDer<'_>,
         dss: &rustls::DigitallySignedStruct,
     ) -> core::result::Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &default_provider().signature_verification_algorithms,
-        )
+        verify_tls13_signature(message, cert, dss, &SUPPORTED_SIG_ALGS)
     }
 
     fn verify_tls12_signature(
@@ -361,18 +347,11 @@ impl ClientCertVerifier for Verifier {
         cert: &CertificateDer<'_>,
         dss: &rustls::DigitallySignedStruct,
     ) -> core::result::Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &default_provider().signature_verification_algorithms,
-        )
+        verify_tls12_signature(message, cert, dss, &SUPPORTED_SIG_ALGS)
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
+        SUPPORTED_SIG_ALGS.supported_schemes()
     }
 
     fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
@@ -1012,17 +991,8 @@ pub(crate) struct TlsTimeProvider;
 
 impl TimeProvider for TlsTimeProvider {
     fn current_time(&self) -> Option<UnixTime> {
-        // Avoid RTC access in AzCVMEmu; use a fixed timestamp.
-        #[cfg(feature = "AzCVMEmu")]
-        {
-            Some(UnixTime::since_unix_epoch(Duration::new(1704067200u64, 0)))
-        }
-        #[cfg(not(feature = "AzCVMEmu"))]
-        {
-            Some(UnixTime::since_unix_epoch(Duration::new(
-                sys_time::get_sys_time()? as u64,
-                0,
-            )))
-        }
+        Some(UnixTime::since_unix_epoch(Duration::from_secs(
+            crate::unix_time()?,
+        )))
     }
 }

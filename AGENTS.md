@@ -84,7 +84,7 @@ Rules for every AI-assisted change.
   - `git clean -fdx`;
   - a submodule update;
   - a branch switch that changes submodules.
-- The script applies required `spdm-rs` patches.
+- The script applies the maintained td-shim and SPDM SymCrypt patches.
 - Missing patches can mimic baseline failures.
 - Use repository build scripts.
 - Treat CI commands as the source of truth.
@@ -114,7 +114,7 @@ Rules for every AI-assisted change.
   ```
 
 - Require every stage to pass.
-- Stages: `prep`, `format`, `deny`, `main`, `emu`.
+- Stages: `prep`, `format`, `deny`, `library`, `main`, `emu`.
 - Stop on failure.
 - Fix the root cause.
 - Resume from the failed stage.

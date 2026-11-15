@@ -27,7 +27,7 @@ runs:
     - name: Install LLVM and Clang
       uses: KyleMayes/install-llvm-action@98e68e10c96dffcb7bfed8b2144541a66b49aa02 # v2.0.8
       with:
-        version: "10.0"
+        version: "18.1.8"
         directory: ${{ runner.temp }}/llvm
 
     - name: Install libtinfo5
@@ -40,7 +40,7 @@ runs:
     - name: Install build dependencies
       shell: bash
       run: |
-        PACKAGES="build-essential ocaml ocamlbuild automake autoconf libtool wget python-is-python3 libssl-dev git cmake perl"
+        PACKAGES="build-essential binutils ocaml ocamlbuild automake autoconf libtool wget python-is-python3 libssl-dev git cmake perl"
         if [[ "${{ inputs.install-tpm-tools }}" == "true" ]]; then
           PACKAGES="$PACKAGES libtss2-dev pkg-config"
         fi

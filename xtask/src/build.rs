@@ -356,19 +356,22 @@ impl BuildArgs {
         sh.set_var("RUSTFLAGS", Self::remap_rustflags()?);
         sh.change_dir(SHIM_FOLDER.as_path());
         if self.profile() == "release" {
-            cmd!(sh, "cargo build -p td-shim --target x86_64-unknown-none --features=main,tdx,log/max_level_off --no-default-features --release")
+            cmd!(sh, "cargo build -p td-shim --target x86_64-unknown-none --features=main,tdx,symcrypt-hash,log/max_level_off --no-default-features --release")
                 .run()?;
         } else {
-            cmd!(sh, "cargo build -p td-shim --target x86_64-unknown-none --features=main,tdx,log/max_level_info --no-default-features --release")
+            cmd!(sh, "cargo build -p td-shim --target x86_64-unknown-none --features=main,tdx,symcrypt-hash,log/max_level_info --no-default-features --release")
                 .run()?;
         }
 
         let shim_output = SHIM_FOLDER.join("target/x86_64-unknown-none/release");
+        let shim_elf = shim_output.join("td-shim");
+        let image_shim = shim_output.join("td-shim-for-image.elf");
+        let objcopy = std::env::var_os("OBJCOPY").unwrap_or_else(|| "objcopy".into());
 
-        Ok((
-            shim_output.join("ResetVector.bin"),
-            shim_output.join("td-shim"),
-        ))
+        // Keep the original symbols for debugging, outside the IPL's flash budget.
+        cmd!(sh, "{objcopy} --strip-all {shim_elf} {image_shim}").run()?;
+
+        Ok((shim_output.join("ResetVector.bin"), image_shim))
     }
 
     fn build_shim_layout(&self) -> Result<()> {

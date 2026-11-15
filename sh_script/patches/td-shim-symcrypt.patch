@@ -1,0 +1,1570 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 814391a..53f1642 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -106,6 +106,12 @@ version = "1.1.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
+ 
++[[package]]
++name = "base64ct"
++version = "1.8.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
++
+ [[package]]
+ name = "bit_field"
+ version = "0.10.2"
+@@ -287,6 +293,12 @@ version = "0.6.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9d6f2aa4d0537bcc1c74df8755072bd31c1ef1a3a1b85a68e8404a8c353b7b8b"
+ 
++[[package]]
++name = "const-oid"
++version = "0.9.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
++
+ [[package]]
+ name = "core-foundation-sys"
+ version = "0.8.6"
+@@ -352,15 +364,16 @@ version = "0.4.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "79b71cca7d95d7681a4b3b9cdf63c8dbc3730d0584c2c74e31416d64a90493f4"
+ dependencies = [
+- "const-oid",
++ "const-oid 0.6.2",
+ ]
+ 
+ [[package]]
+ name = "der"
+-version = "0.7.9"
++version = "0.7.10"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "f55bf8e7b65898637379c1b74eb1551107c8294ed26d855ceb9fd1a09cfc9bc0"
++checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
+ dependencies = [
++ "const-oid 0.9.6",
+  "der_derive",
+  "zeroize",
+ ]
+@@ -439,9 +452,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "getrandom"
+-version = "0.2.12"
++version = "0.2.17"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "190092ea657667030ac6a35e305e62fc4dd69fd98ac98631e5d3a2b1575a12b5"
++checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
+ dependencies = [
+  "cfg-if",
+  "libc",
+@@ -795,6 +808,27 @@ version = "0.2.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
+ 
++[[package]]
++name = "pkcs1"
++version = "0.7.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c8ffb9f10fa047879315e6625af03c164b16962a5368d724ed16323b68ace47f"
++dependencies = [
++ "der 0.7.10",
++ "pkcs8",
++ "spki",
++]
++
++[[package]]
++name = "pkcs8"
++version = "0.10.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f950b2377845cebe5cf8b5165cb3cc1a5e0fa5cfa3e1f7f55707d8fd82e0a7b7"
++dependencies = [
++ "der 0.7.10",
++ "spki",
++]
++
+ [[package]]
+ name = "proc-macro2"
+ version = "1.0.76"
+@@ -875,6 +909,8 @@ checksum = "c08c74e62047bb2de4ff487b251e4a92e24f48745648451635cec7d591162d9f"
+ [[package]]
+ name = "ring"
+ version = "0.17.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7"
+ dependencies = [
+  "cc",
+  "cfg-if",
+@@ -954,6 +990,17 @@ dependencies = [
+  "syn 1.0.109",
+ ]
+ 
++[[package]]
++name = "sec1"
++version = "0.7.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d3e97a565f76233a6003f9f5c54be1d9c5bdfa3eccfb189469f11ec4901c47dc"
++dependencies = [
++ "der 0.7.10",
++ "pkcs8",
++ "zeroize",
++]
++
+ [[package]]
+ name = "serde"
+ version = "1.0.195"
+@@ -1030,6 +1077,16 @@ dependencies = [
+  "lock_api",
+ ]
+ 
++[[package]]
++name = "spki"
++version = "0.7.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
++dependencies = [
++ "base64ct",
++ "der 0.7.10",
++]
++
+ [[package]]
+ name = "static_assertions"
+ version = "1.1.0"
+@@ -1042,6 +1099,25 @@ version = "0.10.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
+ 
++[[package]]
++name = "symcrypt-core"
++version = "0.1.0"
++source = "git+https://github.com/haitaohuang/rust-symcrypt-static?rev=52a32af1703584dd0bcd688ed38cf561d470b9ef#52a32af1703584dd0bcd688ed38cf561d470b9ef"
++dependencies = [
++ "der 0.7.10",
++ "getrandom",
++ "pkcs1",
++ "pkcs8",
++ "sec1",
++ "symcrypt-static-sys",
++ "zeroize",
++]
++
++[[package]]
++name = "symcrypt-static-sys"
++version = "0.1.0"
++source = "git+https://github.com/haitaohuang/rust-symcrypt-static?rev=52a32af1703584dd0bcd688ed38cf561d470b9ef#52a32af1703584dd0bcd688ed38cf561d470b9ef"
++
+ [[package]]
+ name = "syn"
+ version = "1.0.109"
+@@ -1181,14 +1257,13 @@ dependencies = [
+  "anyhow",
+  "cc",
+  "cc-measurement",
+- "der 0.7.9",
+  "lazy_static",
+  "linked_list_allocator",
+  "log",
+  "r-efi",
+- "ring",
+  "scroll",
+  "spin",
++ "symcrypt-core",
+  "td-exception",
+  "td-layout",
+  "td-loader",
+@@ -1200,6 +1275,7 @@ dependencies = [
+  "x86",
+  "x86_64",
+  "zerocopy 0.8.27",
++ "zeroize",
+ ]
+ 
+ [[package]]
+@@ -1231,11 +1307,10 @@ dependencies = [
+  "parse_int",
+  "r-efi",
+  "regex",
+- "ring",
+  "scroll",
+  "serde",
+  "serde_json",
+- "sha2",
++ "symcrypt-core",
+  "td-layout",
+  "td-loader",
+  "td-shim",
+@@ -1836,6 +1911,6 @@ dependencies = [
+ 
+ [[package]]
+ name = "zeroize"
+-version = "1.7.0"
++version = "1.9.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "525b4ec142c6b68a2d10f01f7bbf6755599ca3f81ea53b8431b7dd348f5fdb2d"
++checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
+diff --git a/Cargo.toml b/Cargo.toml
+index 3146980..3eea14d 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -33,6 +33,3 @@ lto = true
+ [profile.release]
+ panic = "abort"    # disable stack unwinding on panic
+ lto = true         # Link-time optimization
+-
+-[patch.crates-io]
+-ring = { path = "library/ring" }
+diff --git a/cc-measurement/src/log.rs b/cc-measurement/src/log.rs
+index ee29c13..7f71dd9 100644
+--- a/cc-measurement/src/log.rs
++++ b/cc-measurement/src/log.rs
+@@ -14,26 +14,40 @@ pub enum CcEventLogError {
+     OutOfResource,
+     InvalidMrIndex(u32),
+     ExtendMr,
++    Hash,
+ }
+ 
++pub type Sha384Hasher = fn(&[u8]) -> Result<[u8; SHA384_DIGEST_SIZE]>;
++
+ #[allow(unused)]
+ pub struct CcEventLogWriter<'a> {
+     area: &'a mut [u8],
+     offset: usize,
+     last: usize,
+     extender: Box<dyn Fn(&[u8; SHA384_DIGEST_SIZE], u32) -> Result<()>>,
++    hasher: Sha384Hasher,
+ }
+ 
+ impl CcEventLogWriter<'_> {
++    #[cfg(any(feature = "ring", feature = "sha2"))]
+     pub fn new(
+         area: &mut [u8],
+         extender: Box<dyn Fn(&[u8; SHA384_DIGEST_SIZE], u32) -> Result<()>>,
++    ) -> Result<CcEventLogWriter<'_>> {
++        Self::new_with_hash(area, extender, Self::hash_sha384)
++    }
++
++    pub fn new_with_hash(
++        area: &mut [u8],
++        extender: Box<dyn Fn(&[u8; SHA384_DIGEST_SIZE], u32) -> Result<()>>,
++        hasher: Sha384Hasher,
+     ) -> Result<CcEventLogWriter<'_>> {
+         let mut cc_event_log = CcEventLogWriter {
+             area,
+             offset: 0,
+             last: 0,
+             extender,
++            hasher,
+         };
+ 
+         // Create the TCG_EfiSpecIDEvent as the first event
+@@ -187,9 +201,7 @@ impl CcEventLogWriter<'_> {
+         hash_data: &[u8],
+         mr_index: u32,
+     ) -> Result<[u8; SHA384_DIGEST_SIZE]> {
+-        let mut digest_sha384 = [0u8; SHA384_DIGEST_SIZE];
+-
+-        Self::hash_sha384(hash_data, &mut digest_sha384);
++        let digest_sha384 = (self.hasher)(hash_data)?;
+ 
+         // Extend the digest to the RTMR
+         (self.extender)(&digest_sha384, mr_index)?;
+@@ -198,24 +210,19 @@ impl CcEventLogWriter<'_> {
+     }
+ 
+     #[cfg(feature = "ring")]
+-    fn hash_sha384(hash_data: &[u8], digest_sha384: &mut [u8; SHA384_DIGEST_SIZE]) {
++    fn hash_sha384(hash_data: &[u8]) -> Result<[u8; SHA384_DIGEST_SIZE]> {
+         let digest = ring::digest::digest(&ring::digest::SHA384, hash_data);
+-        let digest = digest.as_ref();
+-        assert_eq!(digest.len(), SHA384_DIGEST_SIZE);
+-
+-        digest_sha384.clone_from_slice(digest);
++        digest
++            .as_ref()
++            .try_into()
++            .map_err(|_| CcEventLogError::Hash)
+     }
+ 
+     #[cfg(all(not(feature = "ring"), feature = "sha2"))]
+-    fn hash_sha384(hash_data: &[u8], digest_sha384: &mut [u8; SHA384_DIGEST_SIZE]) {
++    fn hash_sha384(hash_data: &[u8]) -> Result<[u8; SHA384_DIGEST_SIZE]> {
+         use sha2::{Digest, Sha384};
+ 
+-        let mut digest = Sha384::new();
+-        digest.update(hash_data);
+-        let digest = digest.finalize();
+-        assert_eq!(digest.as_slice().len(), SHA384_DIGEST_SIZE);
+-
+-        digest_sha384.clone_from_slice(digest.as_slice());
++        Ok(Sha384::digest(hash_data).into())
+     }
+ }
+ 
+@@ -301,19 +308,78 @@ mod tests {
+ 
+     use alloc::{boxed::Box, vec};
+ 
+-    use crate::{
+-        log::CcEventLogReader, CcEventHeader, TcgEfiSpecIdevent, TcgPcrEventHeader, EV_SEPARATOR,
+-        SHA384_DIGEST_SIZE,
+-    };
++    use crate::{log::CcEventLogReader, TcgEfiSpecIdevent, TcgPcrEventHeader, SHA384_DIGEST_SIZE};
++    #[cfg(any(feature = "ring", feature = "sha2"))]
++    use crate::{CcEventHeader, EV_SEPARATOR};
++
++    #[cfg(any(feature = "ring", feature = "sha2"))]
++    use super::Result;
++    use super::{CcEventLogError, CcEventLogWriter};
+ 
+-    use super::{CcEventLogWriter, Result};
++    #[test]
++    fn hash_failure_does_not_extend_or_append_an_event() {
++        use alloc::rc::Rc;
++        use core::cell::Cell;
++
++        let extensions = Rc::new(Cell::new(0));
++        let counter = extensions.clone();
++        let mut area = [0u8; 1024];
++        let mut writer = CcEventLogWriter::new_with_hash(
++            &mut area,
++            Box::new(move |_, _| {
++                counter.set(counter.get() + 1);
++                Ok(())
++            }),
++            |_| Err(CcEventLogError::Hash),
++        )
++        .unwrap();
++        let before = writer.as_slice().to_vec();
++        assert!(matches!(
++            writer.create_event_log(2, 3, &[b"event"], b"measured bytes"),
++            Err(CcEventLogError::Hash)
++        ));
++        assert!(matches!(
++            writer.create_seperator(),
++            Err(CcEventLogError::Hash)
++        ));
++        assert_eq!(extensions.get(), 0);
++        assert_eq!(writer.as_slice(), before);
++    }
++
++    #[test]
++    fn supplied_hasher_receives_measurement_not_event_data() {
++        let mut area = [0u8; 1024];
++        let mut writer = CcEventLogWriter::new_with_hash(
++            &mut area,
++            Box::new(|digest, index| {
++                assert_eq!(digest, &[0xa5; SHA384_DIGEST_SIZE]);
++                assert_eq!(index, 3);
++                Ok(())
++            }),
++            |data| {
++                assert_eq!(data, b"measurement");
++                Ok([0xa5; SHA384_DIGEST_SIZE])
++            },
++        )
++        .unwrap();
++        writer
++            .create_event_log(3, 4, &[b"label"], b"measurement")
++            .unwrap();
++        let reader = CcEventLogReader::new(&area).unwrap();
++        let (header, data) = reader.cc_events.into_iter().next().unwrap();
++        let digest = header.digest.digests[0].digest.sha384;
++        assert_eq!(digest, [0xa5; SHA384_DIGEST_SIZE]);
++        assert_eq!(data, b"label");
++    }
+ 
++    #[cfg(any(feature = "ring", feature = "sha2"))]
+     fn extender(_digest: &[u8; SHA384_DIGEST_SIZE], _mr_index: u32) -> Result<()> {
+         // Do nothing
+         Ok(())
+     }
+ 
+     #[test]
++    #[cfg(any(feature = "ring", feature = "sha2"))]
+     fn test_cc_eventlog_writter_new() {
+         let mut event_log =
+             vec![0u8; size_of::<TcgPcrEventHeader>() + size_of::<TcgEfiSpecIdevent>()];
+@@ -321,6 +387,7 @@ mod tests {
+     }
+ 
+     #[test]
++    #[cfg(any(feature = "ring", feature = "sha2"))]
+     #[should_panic]
+     fn test_cc_eventlog_writter_new_with_small_buf() {
+         let mut event_log =
+@@ -329,6 +396,7 @@ mod tests {
+     }
+ 
+     #[test]
++    #[cfg(any(feature = "ring", feature = "sha2"))]
+     fn test_cc_eventlog_writter() {
+         let mut event_log = vec![0u8; 0x1000];
+ 
+@@ -382,6 +450,7 @@ mod tests {
+     }
+ 
+     #[test]
++    #[cfg(any(feature = "ring", feature = "sha2"))]
+     fn test_cc_events_iterator() {
+         let mut event_log = vec![0u8; 0x1000];
+ 
+@@ -408,6 +477,7 @@ mod tests {
+     }
+ 
+     #[test]
++    #[cfg(any(feature = "ring", feature = "sha2"))]
+     fn test_cc_event_log_reader_query() {
+         let mut event_log = vec![0u8; 0x1000];
+ 
+diff --git a/td-exception/src/asm/handler.asm b/td-exception/src/asm/handler.asm
+index 9be9f0d..96c1dc2 100644
+--- a/td-exception/src/asm/handler.asm
++++ b/td-exception/src/asm/handler.asm
+@@ -4,6 +4,21 @@
+ # Mask the exception vectors that push an error code on the stack
+ .equ EXCEPTION_ERROR_CODE_MASK, 0x20027d00
+ 
++.macro save_fx_state
++        sub rsp, 512
++        and rsp, -16
++        fxsave64 [rsp]
++.endm
++
++.macro restore_fx_state
++        fxrstor64 [rsp]
++        # Wipe the spill using GPRs only; restored XMM registers may hold secrets.
++        mov rdi, rsp
++        mov ecx, 64
++        xor eax, eax
++        rep stosq
++.endm
++
+ .section .text
+ interrupt_handler_entry:
+         push rax
+@@ -23,7 +38,12 @@ interrupt_handler_entry:
+         push r15
+ 
+         mov rdi, rsp
++        mov rbx, rsp
++        save_fx_state
++        cld
+         call generic_interrupt_handler
++        restore_fx_state
++        mov rsp, rbx
+ 
+         pop r15
+         pop r14
+diff --git a/td-exception/src/asm/mod.rs b/td-exception/src/asm/mod.rs
+index b06d53e..dc9e588 100644
+--- a/td-exception/src/asm/mod.rs
++++ b/td-exception/src/asm/mod.rs
+@@ -1,7 +1,29 @@
+ use core::arch::global_asm;
+ 
++#[cfg(not(test))]
+ global_asm!(include_str!("handler.asm"));
+ 
++#[cfg(test)]
++global_asm!(concat!(
++    include_str!("handler.asm"),
++    include_str!("test_fx_state.asm")
++));
++
+ extern "C" {
+     pub(crate) static interrupt_handler_table: u8;
+ }
++
++#[cfg(test)]
++mod tests {
++    extern "C" {
++        fn test_fx_state_preservation(stack_padding: usize) -> usize;
++    }
++
++    #[test]
++    fn interrupt_spill_preserves_xmm_and_is_wiped() {
++        for padding in [0, 8] {
++            // SAFETY: test helper uses the production spill macros without privileged I/O.
++            assert_eq!(unsafe { test_fx_state_preservation(padding) }, 0);
++        }
++    }
++}
+diff --git a/td-exception/src/asm/test_fx_state.asm b/td-exception/src/asm/test_fx_state.asm
+new file mode 100644
+index 0000000..7957c3d
+--- /dev/null
++++ b/td-exception/src/asm/test_fx_state.asm
+@@ -0,0 +1,39 @@
++# Copyright (c) 2026 Microsoft Corporation
++# SPDX-License-Identifier: BSD-2-Clause-Patent
++
++.section .text
++.global test_fx_state_preservation
++test_fx_state_preservation:
++        push rbx
++        push r12
++        mov r12, rdi
++        sub rsp, r12
++        mov rbx, rsp
++        .irp n,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
++        pcmpeqd xmm\n, xmm\n
++        .endr
++        save_fx_state
++        .irp n,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
++        pxor xmm\n, xmm\n
++        .endr
++        cld
++        restore_fx_state
++        mov rdi, rsp
++        mov ecx, 64
++        repe scasq
++        jne .Lfx_failure
++        .irp n,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
++        pmovmskb eax, xmm\n
++        cmp eax, 65535
++        jne .Lfx_failure
++        .endr
++        xor eax, eax
++        jmp .Lfx_done
++.Lfx_failure:
++        mov eax, 1
++.Lfx_done:
++        mov rsp, rbx
++        add rsp, r12
++        pop r12
++        pop rbx
++        ret
+diff --git a/td-shim-tools/Cargo.toml b/td-shim-tools/Cargo.toml
+index bbda2cf..7daf2bc 100644
+--- a/td-shim-tools/Cargo.toml
++++ b/td-shim-tools/Cargo.toml
+@@ -68,11 +68,10 @@ der = { version = "0.4.5", features = ["oid"], optional = true }
+ env_logger = { version = "0.10", optional = true }
+ log = { version = "0.4.5", optional = true }
+ td-loader = { path = "../td-loader", optional = true }
+-ring = { version = "0.17.14", optional = true }
++symcrypt-core = { git = "https://github.com/haitaohuang/rust-symcrypt-static", rev = "52a32af1703584dd0bcd688ed38cf561d470b9ef", default-features = false, features = ["std", "encoding"], optional = true }
+ serde_json = { version = "1.0", optional = true }
+ serde = { version = "1.0", features = ["derive"], optional = true }
+ hex = { version = "0.4", features = ["serde"], optional = true }
+-sha2 = { version = "0.10.2", optional = true }
+ byteorder = { version = "1.4.3", optional = true }
+ parse_int = { version = "0.6.0", optional = true }
+ igvm = "0.3.4"
+@@ -82,12 +81,12 @@ zerocopy = { version = "0.8.14", features = ["derive"]}
+ [features]
+ default = ["enroller", "linker", "signer", "loader", "tee", "calculator", "layout-gen", "metadata-gen", "patcher", "info"]
+ info = ["anyhow", "serde_json", "serde"]
+-enroller = ["clap", "der", "env_logger", "log", "ring", "td-shim/secure-boot"]
++enroller = ["clap", "der", "env_logger", "log", "symcrypt-core", "td-shim/secure-boot"]
+ linker = ["clap", "env_logger", "log", "parse_int", "serde_json", "serde", "td-loader"]
+-signer = ["clap", "der", "env_logger", "log", "ring", "td-shim/secure-boot"]
++signer = ["clap", "der", "env_logger", "log", "symcrypt-core", "td-shim/secure-boot"]
+ loader = ["clap", "env_logger", "log", "anyhow"]
+-tee = ["clap", "env_logger", "log", "serde_json", "serde", "hex", "sha2", "byteorder"]
+-calculator = ["clap", "hex", "parse_int", "sha2", "anyhow", "block-padding"]
++tee = ["clap", "env_logger", "log", "serde_json", "serde", "hex", "symcrypt-core", "byteorder"]
++calculator = ["clap", "hex", "parse_int", "symcrypt-core", "anyhow", "block-padding"]
+ layout-gen = ["anyhow", "serde_json", "serde"]
+ metadata-gen = ["anyhow", "serde_json", "serde"]
+ patcher = ["anyhow", "serde_json", "serde", "hex"]
+diff --git a/td-shim-tools/src/bin/td-payload-reference-calculator/main.rs b/td-shim-tools/src/bin/td-payload-reference-calculator/main.rs
+index a8af11d..c3bed1a 100644
+--- a/td-shim-tools/src/bin/td-payload-reference-calculator/main.rs
++++ b/td-shim-tools/src/bin/td-payload-reference-calculator/main.rs
+@@ -8,8 +8,8 @@
+ use anyhow::*;
+ use clap::{arg, command, ArgAction};
+ use parse_int::parse;
+-use sha2::Digest;
+ use std::{convert::TryFrom, path::Path};
++use symcrypt_core::hash::{Algorithm, Context};
+ 
+ pub const KERNEL_SIZE: &str = "0x2000000";
+ pub const KERNEL_PARAM_SIZE: &str = "0x1000";
+@@ -82,14 +82,14 @@ fn qemu_patch(mut buf: Vec<u8>) -> Result<String> {
+     buf[0x22A] = 0x02;
+     buf[0x22B] = 0x00;
+ 
+-    let mut hasher = sha2::Sha384::new();
++    let mut hasher = Context::new(Algorithm::Sha384)?;
+     let (number_of_region_entry, regions_base, regions_size) = get_image_regions(&buf);
+ 
+     for index in 0..number_of_region_entry {
+         hasher.update(&buf[regions_base[index]..regions_base[index] + regions_size[index]]);
+     }
+ 
+-    let res = hasher.finalize();
++    let res = hasher.finish();
+     Ok(hex::encode(res))
+ }
+ 
+@@ -178,9 +178,7 @@ fn padding_digest(mut buf: Vec<u8>, len: usize) -> Result<String> {
+     let diff = len - buf.len();
+ 
+     buf.extend_from_slice(&vec![0; diff as usize]);
+-    let mut hasher = sha2::Sha384::new();
+-    hasher.update(&buf);
+-    let res = hasher.finalize();
++    let res = Algorithm::Sha384.digest(&buf)?;
+     Ok(hex::encode(res))
+ }
+ 
+diff --git a/td-shim-tools/src/bin/td-shim-sign-payload/main.rs b/td-shim-tools/src/bin/td-shim-sign-payload/main.rs
+index 295885f..e559fc4 100644
+--- a/td-shim-tools/src/bin/td-shim-sign-payload/main.rs
++++ b/td-shim-tools/src/bin/td-shim-sign-payload/main.rs
+@@ -12,10 +12,7 @@ use std::{env, io, path::Path};
+ use clap::ArgAction;
+ use env_logger::Env;
+ use log::{error, trace, LevelFilter};
+-use ring::{
+-    rand,
+-    signature::{EcdsaKeyPair, RsaKeyPair, ECDSA_P384_SHA384_FIXED_SIGNING},
+-};
++use symcrypt_core::{ecc, rsa};
+ use td_layout::build_time::TD_SHIM_PAYLOAD_SIZE;
+ use td_shim_tools::signer::{PayloadSigner, SigningAlgorithm};
+ use td_shim_tools::{InputData, OutputFile};
+@@ -103,20 +100,14 @@ fn main() -> io::Result<()> {
+     let mut private = InputData::new(private_file, 0..=1024 * 1024, "private key")?;
+     let algorithm = match algorithm {
+         "RSAPSS_3072_SHA384" => {
+-            let rsa_key_pair = RsaKeyPair::from_pkcs8(private.as_bytes()).map_err(|e| {
++            let rsa_key_pair = rsa::Key::from_pkcs8(private.as_bytes()).map_err(|e| {
+                 error!("Can not load RSA private key from {}: {}", private_file, e);
+                 io::Error::new(io::ErrorKind::Other, "Can not load RSA private key")
+             })?;
+             SigningAlgorithm::Rsapss3072Sha384(rsa_key_pair)
+         }
+         "ECDSA_NIST_P384_SHA384" => {
+-            let rng = rand::SystemRandom::new();
+-            let ecdsa_key_pair = EcdsaKeyPair::from_pkcs8(
+-                &ECDSA_P384_SHA384_FIXED_SIGNING,
+-                private.as_bytes(),
+-                &rng,
+-            )
+-            .map_err(|e| {
++            let ecdsa_key_pair = ecc::Key::from_pkcs8(private.as_bytes()).map_err(|e| {
+                 error!("Can not load DSA private key from {}: {}", private_file, e);
+                 io::Error::new(io::ErrorKind::Other, "Can not load DSA private key")
+             })?;
+diff --git a/td-shim-tools/src/bin/td-shim-tee-info-hash/main.rs b/td-shim-tools/src/bin/td-shim-tee-info-hash/main.rs
+index be96451..82c717c 100644
+--- a/td-shim-tools/src/bin/td-shim-tee-info-hash/main.rs
++++ b/td-shim-tools/src/bin/td-shim-tee-info-hash/main.rs
+@@ -8,12 +8,12 @@ use clap::ArgAction;
+ use core::mem::size_of;
+ use log::{error, LevelFilter};
+ use serde_json;
+-use sha2::{Digest, Sha384};
+ use std::fs::File;
+ use std::path::PathBuf;
+ use std::str::FromStr;
+ use std::{env, io, path::Path};
+ use std::{fs, io::Write};
++use symcrypt_core::hash::Algorithm;
+ use td_shim_tools::tee_info_hash::{Manifest, TdInfoStruct, SHA384_DIGEST_SIZE};
+ 
+ const TEE_INFO_HASH_BIN: &str = "tee_info_hash.bin";
+@@ -133,19 +133,19 @@ fn main() -> io::Result<()> {
+         ..Default::default()
+     };
+ 
+-    tee_info.build_mrtd(&mut image, image_size);
+-    tee_info.build_rtmr_with_seperator(config.seperator);
++    tee_info.build_mrtd(&mut image, image_size)?;
++    tee_info.build_rtmr_with_seperator(config.seperator)?;
+     log::info!("{}", &tee_info);
+ 
+     log::info!(
+         "* Generate tee hash info binary file {}",
+         &config.output.display()
+     );
+-    let mut sha384hasher = Sha384::new();
+     let mut buffer: [u8; TDINFO_SIZE] = [0; TDINFO_SIZE];
+     tee_info.pack(&mut buffer);
+-    sha384hasher.update(buffer);
+-    let hash = sha384hasher.finalize();
++    let hash = Algorithm::Sha384
++        .digest(&buffer)
++        .map_err(io::Error::other)?;
+ 
+     let mut tee_info_hash_file =
+         File::create(&config.output).expect("Failed to create tee info hash file!\n");
+diff --git a/td-shim-tools/src/enroller.rs b/td-shim-tools/src/enroller.rs
+index 045d7a1..b84e1e7 100644
+--- a/td-shim-tools/src/enroller.rs
++++ b/td-shim-tools/src/enroller.rs
+@@ -11,7 +11,7 @@ use std::path::PathBuf;
+ use std::vec::Vec;
+ 
+ use log::error;
+-use ring::digest;
++use symcrypt_core::hash::Algorithm;
+ use td_layout::build_time::{
+     TD_SHIM_CONFIG_BASE, TD_SHIM_CONFIG_OFFSET, TD_SHIM_CONFIG_SIZE, TD_SHIM_FIRMWARE_SIZE,
+ };
+@@ -55,7 +55,7 @@ fn update_checksum(data: &mut [u8]) {
+         }
+     }
+ 
+-    data[FFS_HEADER_HEADER_CHECKSUM_OFFSET] = u8::MAX - sum + 1;
++    data[FFS_HEADER_HEADER_CHECKSUM_OFFSET] = 0u8.wrapping_sub(sum);
+ }
+ // Used to construct a firmware file with a ffs header
+ // and FV_FILETYPE_RAW type
+@@ -303,7 +303,7 @@ const PUB_KEY_MAX_SIZE: usize = 1024 * 1024;
+ /// Please refer to section "Trust Anchor in Td-Shim" in doc/secure_boot.md for definitions.
+ pub fn create_key_file(key_file: &str, hash_alg: &str) -> io::Result<FirmwareRawFile> {
+     let hash_alg = match hash_alg {
+-        "SHA384" => &digest::SHA384,
++        "SHA384" => Algorithm::Sha384,
+         _ => {
+             error!("Unsupported hash algorithm {}", hash_alg);
+             return Err(io::Error::other("unsupported hash algorithm"));
+@@ -374,8 +374,9 @@ pub fn create_key_file(key_file: &str, hash_alg: &str) -> io::Result<FirmwareRaw
+     }
+ 
+     // Hash public key
+-    let hash = digest::digest(hash_alg, public_bytes.as_slice());
+-    let hash = hash.as_ref();
++    let hash = hash_alg
++        .digest(public_bytes.as_slice())
++        .map_err(io::Error::other)?;
+ 
+     // Create a firmware file to hold secure boot contens
+     let mut ff = FirmwareRawFile::new(CFV_FFS_HEADER_TRUST_ANCHOR_GUID.as_bytes());
+@@ -389,7 +390,7 @@ pub fn create_key_file(key_file: &str, hash_alg: &str) -> io::Result<FirmwareRaw
+     };
+     ff.append(pub_key_header.as_bytes());
+     // public key hash value
+-    ff.append(hash);
++    ff.append(&hash);
+ 
+     Ok(ff)
+ }
+@@ -401,6 +402,60 @@ mod test {
+     use super::*;
+     use td_shim_interface::td_uefi_pi::pi::guid;
+ 
++    #[cfg(feature = "signer")]
++    #[test]
++    fn symcrypt_signatures_preserve_enrollment_and_payload_formats() {
++        use crate::signer::{PayloadSigner, SigningAlgorithm};
++        use std::io::Write;
++        use symcrypt_core::{ecc, rsa};
++        use td_shim::secure_boot::{PayloadSignHeader, PayloadVerifier};
++
++        let ec = ecc::Key::generate(ecc::Curve::P384).unwrap();
++        let ec_spki = ec.to_spki().unwrap();
++        let rsa = rsa::Key::generate(3072).unwrap();
++        let rsa_spki = rsa.to_spki().unwrap();
++        for (algorithm, spki, trailer_size) in [
++            (SigningAlgorithm::EcdsaNistP384Sha384(ec), ec_spki, 192),
++            (SigningAlgorithm::Rsapss3072Sha384(rsa), rsa_spki, 776),
++        ] {
++            let mut key_file = tempfile::NamedTempFile::new().unwrap();
++            key_file.write_all(&spki).unwrap();
++            let key = create_key_file(key_file.path().to_str().unwrap(), "SHA384").unwrap();
++            let mut cfv = build_cfv_header().as_bytes().to_vec();
++            cfv.extend_from_slice(key.as_bytes());
++            cfv.resize(TD_SHIM_CONFIG_SIZE as usize, 0);
++
++            let payload = b"native signed firmware";
++            let mut signer = PayloadSigner::new(payload, algorithm);
++            let header = signer.build_header(7, 3);
++            let signed = signer.sign(header).unwrap().to_vec();
++            assert_eq!(
++                signed.len(),
++                size_of::<PayloadSignHeader>() + payload.len() + trailer_size
++            );
++            let verifier = PayloadVerifier::new(&signed, &cfv).unwrap();
++            assert_eq!(verifier.get_payload_svn(), 3);
++            verifier.verify().unwrap();
++            assert_eq!(
++                PayloadVerifier::get_payload_image(&signed).unwrap(),
++                payload
++            );
++
++            let mut changed_payload = signed.clone();
++            changed_payload[size_of::<PayloadSignHeader>()] ^= 1;
++            assert!(PayloadVerifier::new(&changed_payload, &cfv)
++                .unwrap()
++                .verify()
++                .is_err());
++            let mut changed_key = signed;
++            changed_key[size_of::<PayloadSignHeader>() + payload.len()] ^= 1;
++            assert!(PayloadVerifier::new(&changed_key, &cfv)
++                .unwrap()
++                .verify()
++                .is_err());
++        }
++    }
++
+     fn read_u24(data: &[u8]) -> u32 {
+         let mut num = data[0] as u32;
+         num |= (data[1] as u32) << 8;
+@@ -409,6 +464,14 @@ mod test {
+         num
+     }
+ 
++    #[test]
++    fn test_update_checksum_zero_sum() {
++        let mut data = [0u8; size_of::<FvFfsFileHeader>()];
++
++        update_checksum(&mut data);
++        assert_eq!(data[FFS_HEADER_HEADER_CHECKSUM_OFFSET], 0);
++    }
++
+     #[test]
+     fn test_firmware_file() {
+         // {214D240F-77A3-441B-9DA8-C588E43192C1}
+diff --git a/td-shim-tools/src/lib.rs b/td-shim-tools/src/lib.rs
+index f38bce2..71f226a 100644
+--- a/td-shim-tools/src/lib.rs
++++ b/td-shim-tools/src/lib.rs
+@@ -10,6 +10,7 @@ use std::{fs, io};
+ 
+ use log::error;
+ use td_layout::build_time::TD_SHIM_FIRMWARE_SIZE;
++use zeroize::{Zeroize, Zeroizing};
+ 
+ #[cfg(all(feature = "enroller", not(feature = "no-config")))]
+ pub mod enroller;
+@@ -35,7 +36,7 @@ pub mod image;
+ 
+ /// Struct to read input data from a file.
+ pub struct InputData {
+-    data: Vec<u8>,
++    data: Zeroizing<Vec<u8>>,
+ }
+ 
+ impl InputData {
+@@ -57,10 +58,10 @@ impl InputData {
+             return Err(io::Error::other("invalid file size"));
+         }
+ 
+-        let data = fs::read(name).map_err(|e| {
++        let data = Zeroizing::new(fs::read(name).map_err(|e| {
+             error!("Can not read data from file {}: {}", name, e);
+             e
+-        })?;
++        })?);
+ 
+         // IGVM files need not be TD_SHIM_FIRMWARE_SIZE, as an optimization IGVM files deduplicate pages
+         if !name.contains(".igvm") {
+@@ -82,7 +83,7 @@ impl InputData {
+ 
+     /// Clear the internal data buffer.
+     pub fn clear(&mut self) {
+-        self.data.clear()
++        self.data.zeroize()
+     }
+ 
+     /// Get the input data.
+diff --git a/td-shim-tools/src/linker.rs b/td-shim-tools/src/linker.rs
+index 0ed2332..77f05fb 100644
+--- a/td-shim-tools/src/linker.rs
++++ b/td-shim-tools/src/linker.rs
+@@ -532,7 +532,7 @@ impl TdShimLinker {
+             "reset_vector",
+         )?;
+         let mut reset_vector_data = reset_vector_header.as_bytes().to_vec();
+-        reset_vector_data.extend(&reset_vector_bin.data);
++        reset_vector_data.extend_from_slice(&reset_vector_bin.data);
+         let entry_point = (reloc.0 - SIZE_1MB) as u32;
+         // Overwrite the ResetVectorParams and TdxMetadataPtr.
+         let reset_vector_info = ResetVectorParams {
+diff --git a/td-shim-tools/src/signer.rs b/td-shim-tools/src/signer.rs
+index 2d11ae4..a62c2f6 100644
+--- a/td-shim-tools/src/signer.rs
++++ b/td-shim-tools/src/signer.rs
+@@ -6,21 +6,17 @@ use std::io;
+ use std::mem::size_of;
+ use std::vec::Vec;
+ 
+-use der::Decodable;
+ use log::error;
+-use ring::rand;
+-use ring::signature::{EcdsaKeyPair, KeyPair, RsaKeyPair, RSA_PSS_SHA384};
++use symcrypt_core::{ecc, hash::Algorithm, rsa};
+ use td_shim::secure_boot::{
+     PayloadSignHeader, PAYLOAD_SIGN_ECDSA_NIST_P384_SHA384, PAYLOAD_SIGN_RSA_EXPONENT_SIZE,
+     PAYLOAD_SIGN_RSA_PSS_3072_SHA384, SIGNED_PAYLOAD_FILE_HEADER_GUID,
+ };
+ 
+-use crate::public_key::RsaPublicKeyInfo;
+-
+ /// Type of public key.
+ pub enum SigningAlgorithm {
+-    Rsapss3072Sha384(RsaKeyPair),
+-    EcdsaNistP384Sha384(EcdsaKeyPair),
++    Rsapss3072Sha384(rsa::Key),
++    EcdsaNistP384Sha384(ecc::Key),
+ }
+ 
+ /// Utility structure to sign shim payload.
+@@ -48,22 +44,17 @@ impl<'a> PayloadSigner<'a> {
+ 
+     /// Sign the payload with given header.
+     pub fn sign(&mut self, header: PayloadSignHeader) -> io::Result<&[u8]> {
+-        let rng = rand::SystemRandom::new();
+-
+         self.signed_image = header.as_bytes().to_vec();
+         self.signed_image.extend_from_slice(self.raw_image);
+ 
+-        match &self.algorithm {
++        match &mut self.algorithm {
+             SigningAlgorithm::Rsapss3072Sha384(rsa_keypair) => {
+-                let public = rsa_keypair.public().as_ref();
+-                let public_der = RsaPublicKeyInfo::from_der(public).map_err(|_| {
+-                    io::Error::new(io::ErrorKind::InvalidInput, "invalid RSA public key")
+-                })?;
+-                let modulus = public_der.modulus.as_bytes();
+-                if rsa_keypair.public().modulus_len() != 384 {
++                let (modulus, exponent) =
++                    rsa_keypair.public_components().map_err(io::Error::other)?;
++                if rsa_keypair.modulus_len() != 384 {
+                     error!(
+                         "Invalid RSA public modulus length: {}",
+-                        rsa_keypair.public().modulus_len()
++                        rsa_keypair.modulus_len()
+                     );
+                     return Err(io::Error::new(
+                         io::ErrorKind::InvalidInput,
+@@ -71,37 +62,26 @@ impl<'a> PayloadSigner<'a> {
+                     ));
+                 }
+ 
+-                let exponent = public_der.exponents.as_bytes();
+-                if exponent.len() > PAYLOAD_SIGN_RSA_EXPONENT_SIZE {
+-                    error!(
+-                        "Invalid RSA exponent length: {}, max {}",
+-                        exponent.len(),
+-                        PAYLOAD_SIGN_RSA_EXPONENT_SIZE
+-                    );
+-                    return Err(io::Error::new(
+-                        io::ErrorKind::InvalidInput,
+-                        "invalid RSA exponent size",
+-                    ));
+-                }
+-
+-                let mut exp_bytes = [0u8; PAYLOAD_SIGN_RSA_EXPONENT_SIZE];
+-                exp_bytes[PAYLOAD_SIGN_RSA_EXPONENT_SIZE - exponent.len()..]
+-                    .copy_from_slice(exponent);
+-
+-                let mut signature: Vec<u8> = vec![0; rsa_keypair.public().modulus_len()];
+-                rsa_keypair
+-                    .sign(&RSA_PSS_SHA384, &rng, &self.signed_image, &mut signature)
++                let exp_bytes: [u8; PAYLOAD_SIGN_RSA_EXPONENT_SIZE] = exponent.to_be_bytes();
++                let signature = rsa_keypair
++                    .sign(Algorithm::Sha384, rsa::Padding::Pss, &self.signed_image)
+                     .map_err(|e| {
+                         error!("Failed to sign message with RSA: {}", e);
+                         io::Error::other("failed to sign message")
+                     })?;
+ 
+-                self.signed_image.extend_from_slice(modulus);
++                self.signed_image.extend_from_slice(&modulus);
+                 self.signed_image.extend_from_slice(&exp_bytes);
+                 self.signed_image.extend_from_slice(signature.as_slice());
+             }
+             SigningAlgorithm::EcdsaNistP384Sha384(ecdsa_keypair) => {
+-                let public_key = ecdsa_keypair.public_key().as_ref();
++                if ecdsa_keypair.curve() != ecc::Curve::P384 {
++                    return Err(io::Error::new(
++                        io::ErrorKind::InvalidInput,
++                        "expected P384 key",
++                    ));
++                }
++                let public_key = ecdsa_keypair.public_key().map_err(io::Error::other)?;
+                 // 0x4 -- Uncompressed
+                 // 0x0 -- Compressed
+                 if public_key[0] != 0x4 {
+@@ -113,7 +93,7 @@ impl<'a> PayloadSigner<'a> {
+                 }
+ 
+                 let signature = ecdsa_keypair
+-                    .sign(&rng, self.signed_image.as_slice())
++                    .sign(Algorithm::Sha384, self.signed_image.as_slice())
+                     .map_err(|e| {
+                         error!("Failed to sign message with ECDSA: {}", e);
+                         io::Error::other("failed to sign message")
+@@ -146,3 +126,23 @@ impl<'a> PayloadSigner<'a> {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn signer_rejects_keys_outside_the_payload_profile() {
++        for algorithm in [
++            SigningAlgorithm::EcdsaNistP384Sha384(ecc::Key::generate(ecc::Curve::P256).unwrap()),
++            SigningAlgorithm::Rsapss3072Sha384(rsa::Key::generate(2048).unwrap()),
++        ] {
++            let mut signer = PayloadSigner::new(b"payload", algorithm);
++            let header = signer.build_header(1, 1);
++            assert_eq!(
++                signer.sign(header).unwrap_err().kind(),
++                io::ErrorKind::InvalidInput
++            );
++        }
++    }
++}
+diff --git a/td-shim-tools/src/tee_info_hash.rs b/td-shim-tools/src/tee_info_hash.rs
+index 9f89a97..e67fc85 100644
+--- a/td-shim-tools/src/tee_info_hash.rs
++++ b/td-shim-tools/src/tee_info_hash.rs
+@@ -9,12 +9,12 @@ use igvm::{IgvmDirectiveHeader, IgvmFile};
+ use r_efi::base::Guid;
+ use scroll::Pread;
+ use serde::{Deserialize, Serialize};
+-use sha2::{Digest, Sha384};
+ use std::fs::File;
+ use std::io::Read;
+ use std::io::Seek;
+ use std::io::SeekFrom;
+ use std::mem::size_of;
++use symcrypt_core::hash::{Algorithm, Context};
+ use td_layout::build_time::{TD_SHIM_CONFIG_BASE, TD_SHIM_CONFIG_SIZE};
+ use td_shim_interface::metadata::*;
+ use zerocopy::FromBytes;
+@@ -193,7 +193,11 @@ impl TdInfoStruct {
+         packed_size
+     }
+ 
+-    pub fn build_mrtd(&mut self, raw_image_file: &mut File, image_size: u64) {
++    pub fn build_mrtd(
++        &mut self,
++        raw_image_file: &mut File,
++        image_size: u64,
++    ) -> std::io::Result<()> {
+         let mut metadata_off: u32 = 0;
+ 
+         raw_image_file
+@@ -291,7 +295,7 @@ impl TdInfoStruct {
+ 
+         desc_offset += size_of::<TdxMetadataDescriptor>();
+ 
+-        let mut sha384hasher = Sha384::new();
++        let mut sha384hasher = Context::new(Algorithm::Sha384).map_err(std::io::Error::other)?;
+ 
+         for _i in 0..descriptor.number_of_section_entry {
+             // DataOffset	    0	UINT32	4	The offset to the raw section in the binary image.
+@@ -342,11 +346,11 @@ impl TdInfoStruct {
+                 // Use TDCALL [TDH.MEM.PAGE.ADD]
+                 if sec.attributes & TDX_METADATA_ATTRIBUTES_EXTEND_MEM_PAGE_ADD == 0 {
+                     // Byte 0 through 15 contain the ASCII string 'MEM.PAGE.ADD' and padding.
+-                    sha384hasher.update(MEM_PAGE_ADD);
++                    sha384hasher.update(&MEM_PAGE_ADD);
+                     // Byte 16 through 23 contain the GPA (in little-endian format).
+-                    sha384hasher.update(page_addr.to_le_bytes());
++                    sha384hasher.update(&page_addr.to_le_bytes());
+                     // 0 padding to 128 byte buffer.
+-                    sha384hasher.update(MRTD_EXTENSION_BUFFER_PADDING);
++                    sha384hasher.update(&MRTD_EXTENSION_BUFFER_PADDING);
+                 }
+ 
+                 // Use TDCALL [TDH.MR.EXTEND]
+@@ -355,11 +359,11 @@ impl TdInfoStruct {
+ 
+                     for chunk in page.chunks_exact(TDH_MR_EXTEND_GRANULARITY as usize) {
+                         // Byte 0 through 15 contain the ASCII string 'MR.EXTEND' and padding.
+-                        sha384hasher.update(MR_EXTEND);
++                        sha384hasher.update(&MR_EXTEND);
+                         // Byte 16 through 23 contain the GPA (in little-endian format).
+-                        sha384hasher.update(chunk_addr.to_le_bytes());
++                        sha384hasher.update(&chunk_addr.to_le_bytes());
+                         // 0 padding to 128 byte buffer.
+-                        sha384hasher.update(MRTD_EXTENSION_BUFFER_PADDING);
++                        sha384hasher.update(&MRTD_EXTENSION_BUFFER_PADDING);
+ 
+                         // Hash 256 bytes of chunk data
+                         sha384hasher.update(chunk);
+@@ -369,12 +373,13 @@ impl TdInfoStruct {
+                 page_addr += PAGE_SIZE;
+             }
+         }
+-        let hash = sha384hasher.finalize();
++        let hash = sha384hasher.finish();
+         self.mrtd.copy_from_slice(hash.as_slice());
++        Ok(())
+     }
+ 
+-    pub fn build_igvmmrtd(&mut self, raw_image_file: &mut File) {
+-        let mut sha384hasher = Sha384::new();
++    pub fn build_igvmmrtd(&mut self, raw_image_file: &mut File) -> std::io::Result<()> {
++        let mut sha384hasher = Context::new(Algorithm::Sha384).map_err(std::io::Error::other)?;
+         let mut contents = Vec::new();
+         raw_image_file.read_to_end(&mut contents).unwrap();
+         let igvm = IgvmFile::new_from_binary(&contents, None).expect("file parse error");
+@@ -404,7 +409,7 @@ impl TdInfoStruct {
+                 // Use TDCALL [TDH.MEM.PAGE.ADD]
+                 fill_buffer128_with_mem_page_add(&mut buffer128, *gpa);
+ 
+-                sha384hasher.update(buffer128);
++                sha384hasher.update(&buffer128);
+ 
+                 if !flags.unmeasured() {
+                     // Hash the contents of the 4K page, 256 bytes at a time.
+@@ -419,18 +424,19 @@ impl TdInfoStruct {
+                                 offset,
+                             );
+ 
+-                            sha384hasher.update(buffer3_128[0]);
+-                            sha384hasher.update(buffer3_128[1]);
+-                            sha384hasher.update(buffer3_128[2]);
++                            sha384hasher.update(&buffer3_128[0]);
++                            sha384hasher.update(&buffer3_128[1]);
++                            sha384hasher.update(&buffer3_128[2]);
+                         }
+                     }
+                 }
+             }
+         }
+ 
+-        let hash = sha384hasher.finalize();
++        let hash = sha384hasher.finish();
+         println!("MRTD Hash: {hash:x?}");
+         self.mrtd.copy_from_slice(hash.as_slice());
++        Ok(())
+     }
+ 
+     pub fn read_igvmcfvdata(&mut self, raw_image_file: &mut File) -> Vec<u8> {
+@@ -476,22 +482,23 @@ impl TdInfoStruct {
+         cfv
+     }
+ 
+-    pub fn build_rtmr_with_seperator(&mut self, seperator: u32) {
++    pub fn build_rtmr_with_seperator(&mut self, seperator: u32) -> std::io::Result<()> {
+         let seperator = u32::to_le_bytes(seperator);
+ 
+-        let mut sha384hasher = Sha384::new();
+-        sha384hasher.update(seperator);
+-        let hash = sha384hasher.finalize();
++        let hash = Algorithm::Sha384
++            .digest(&seperator)
++            .map_err(std::io::Error::other)?;
+ 
+         let mut concat_input = [0u8; SHA384_DIGEST_SIZE * 2];
+         concat_input[SHA384_DIGEST_SIZE..].copy_from_slice(hash.as_slice());
+ 
+-        let mut sha384hasher = Sha384::new();
+-        sha384hasher.update(concat_input);
+-        let hash = sha384hasher.finalize();
++        let hash = Algorithm::Sha384
++            .digest(&concat_input)
++            .map_err(std::io::Error::other)?;
+ 
+         self.rtmr0.copy_from_slice(hash.as_slice());
+         self.rtmr1.copy_from_slice(hash.as_slice());
++        Ok(())
+     }
+ }
+ 
+diff --git a/td-shim/Cargo.toml b/td-shim/Cargo.toml
+index 95376f5..bbd2112 100644
+--- a/td-shim/Cargo.toml
++++ b/td-shim/Cargo.toml
+@@ -24,13 +24,14 @@ r-efi = "3.2.0"
+ scroll = { version = "0.10", default-features = false, features = ["derive"] }
+ td-layout = { path = "../td-layout" }
+ td-shim-interface =  { path = "../td-shim-interface" }
+-cc-measurement = { path = "../cc-measurement" }
++cc-measurement = { path = "../cc-measurement", default-features = false }
+ zerocopy = { version = "=0.8.27", features = ["derive"] }
++symcrypt-core = { git = "https://github.com/haitaohuang/rust-symcrypt-static", rev = "52a32af1703584dd0bcd688ed38cf561d470b9ef", default-features = false, optional = true }
++zeroize = { version = "1.8.1", default-features = false, optional = true }
+ 
+ td-loader = { path = "../td-loader", optional = true }
+ linked_list_allocator = { version = "0.10", optional = true }
+ log = { version = "0.4.13", optional = true }
+-ring = { version = "0.17.14", default-features = false, features = ["alloc"], optional = true }
+ spin = { version = "0.9.2", optional = true }
+ td-exception =  { path = "../td-exception", optional = true }
+ td-logger =  { path = "../td-logger", optional = true }
+@@ -38,15 +39,17 @@ td-paging = { path = "../td-paging", optional = true }
+ x86 = { version ="0.47.0", optional = true }
+ x86_64 = { version = "0.14.9", default-features = false, features = ["instructions"], optional = true }
+ 
+-# secure boot
+-der = {version = "0.7.9", features = ["derive", "alloc"], optional = true}
+-
+ # TDX
+ tdx-tdcall = { path = "../tdx-tdcall", optional = true }
+ 
++[target.'cfg(not(target_os = "none"))'.dependencies]
++symcrypt-core = { git = "https://github.com/haitaohuang/rust-symcrypt-static", rev = "52a32af1703584dd0bcd688ed38cf561d470b9ef", default-features = false, features = ["std"], optional = true }
++
+ [features]
+-default = ["secure-boot"]
+-secure-boot = ["der", "ring"]
++default = ["secure-boot", "symcrypt-hash"]
++secure-boot = ["symcrypt"]
++symcrypt = ["dep:symcrypt-core", "dep:zeroize"]
++symcrypt-hash = ["symcrypt"]
+ tdx = ["tdx-tdcall", "td-exception/tdx", "td-logger/tdx", "x86"]
+ lazy-accept = ["tdx"]
+ ring-hash = ["cc-measurement/ring"]
+diff --git a/td-shim/src/bin/td-shim/main.rs b/td-shim/src/bin/td-shim/main.rs
+index 89a58a3..5408230 100644
+--- a/td-shim/src/bin/td-shim/main.rs
++++ b/td-shim/src/bin/td-shim/main.rs
+@@ -108,6 +108,14 @@ pub extern "win64" fn _start(
+     // APs must be parked before the BSP sends its first mailbox command.
+     td::wait_for_aps_parked();
+ 
++    #[cfg(feature = "symcrypt")]
++    {
++        // SAFETY: bootstrap enabled SSE; the installed handlers preserve XMM state.
++        if let Err(error) = unsafe { td_shim::crypto::initialize() } {
++            panic!("Failed to initialize SymCrypt: {:?}", error);
++        }
++    }
++
+     // Initialize the static information from the metadata
+     let static_info = BootTimeStatic::new().expect("Invalid metadata");
+ 
+@@ -132,8 +140,15 @@ pub extern "win64" fn _start(
+     let event_log_buf = mem.get_dynamic_mem_slice_mut(memslice::SliceType::EventLog);
+     // Initialize event log memory with 0xff which help OS to know the last entry.
+     event_log_buf.fill(0xff);
+-    let mut td_event_log = CcEventLogWriter::new(event_log_buf, Box::new(td::extend_rtmr))
+-        .expect("Failed to create and initialize the event log");
++    #[cfg(feature = "symcrypt-hash")]
++    let event_log =
++        CcEventLogWriter::new_with_hash(event_log_buf, Box::new(td::extend_rtmr), |data| {
++            td_shim::crypto::digest_sha384(data)
++                .map_err(|_| cc_measurement::log::CcEventLogError::Hash)
++        });
++    #[cfg(not(feature = "symcrypt-hash"))]
++    let event_log = CcEventLogWriter::new(event_log_buf, Box::new(td::extend_rtmr));
++    let mut td_event_log = event_log.expect("Failed to create and initialize the event log");
+ 
+     // Log the TD HOB if td-shim consumed its content
+     #[cfg(all(not(feature = "no-td-hob"), not(feature = "no-acpi-ccel")))]
+diff --git a/td-shim/src/crypto.rs b/td-shim/src/crypto.rs
+new file mode 100644
+index 0000000..3214d70
+--- /dev/null
++++ b/td-shim/src/crypto.rs
+@@ -0,0 +1,118 @@
++// Copyright (c) 2026 Microsoft Corporation
++//
++// SPDX-License-Identifier: BSD-2-Clause-Patent
++
++use core::convert::TryInto;
++use symcrypt_core::{Error, Result};
++
++/// Initialize the native backend before measurements or key operations.
++///
++/// # Safety
++/// The allocator and SSE state must be available, and all interrupt/exception
++/// paths must preserve XMM state. No interrupt may call cryptography.
++pub unsafe fn initialize() -> Result<()> {
++    #[cfg(target_os = "none")]
++    {
++        // SAFETY: the caller establishes the firmware ABI/interrupt contract.
++        unsafe { symcrypt_core::platform::initialize_with_platform(&PLATFORM) }
++    }
++    #[cfg(not(target_os = "none"))]
++    {
++        symcrypt_core::platform::ensure_initialized()
++    }
++}
++
++pub fn digest_sha384(data: &[u8]) -> Result<[u8; 48]> {
++    symcrypt_core::hash::Algorithm::Sha384
++        .digest(data)?
++        .try_into()
++        .map_err(|_| Error::InvalidLength)
++}
++
++#[cfg(target_os = "none")]
++static PLATFORM: symcrypt_core::platform::Platform = symcrypt_core::platform::Platform {
++    cpuid,
++    entropy,
++    fatal: |_| {
++        // Never unwind through a native frame, including a failed stack check.
++        unsafe { core::arch::asm!("cli", options(nomem, nostack)) };
++        loop {
++            unsafe { core::arch::asm!("hlt", options(nomem, nostack)) };
++        }
++    },
++};
++
++#[cfg(target_os = "none")]
++fn cpuid(leaf: u32, subleaf: u32) -> [u32; 4] {
++    #[allow(unused_unsafe)]
++    let result = unsafe { core::arch::x86_64::__cpuid_count(leaf, subleaf) };
++    [result.eax, result.ebx, result.ecx, result.edx]
++}
++
++#[cfg(target_os = "none")]
++fn entropy(output: &mut [u8]) -> Result<()> {
++    use zeroize::Zeroize;
++
++    if cpuid(0, 0)[0] < 7 || cpuid(7, 0)[1] & (1 << 18) == 0 {
++        output.zeroize();
++        return Err(Error::EntropyUnavailable);
++    }
++    fill_entropy(output, || {
++        let mut word = zeroize::Zeroizing::new(0);
++        // SAFETY: RDSEED support was checked using the TD's CPUID results.
++        if unsafe { core::arch::x86_64::_rdseed64_step(&mut word) } == 1 {
++            Some(*word)
++        } else {
++            core::hint::spin_loop();
++            None
++        }
++    })
++}
++
++#[cfg(any(target_os = "none", test))]
++fn fill_entropy(output: &mut [u8], mut read: impl FnMut() -> Option<u64>) -> Result<()> {
++    use zeroize::{Zeroize, Zeroizing};
++
++    for chunk in output.chunks_mut(8) {
++        let Some(word) = (0..1024).find_map(|_| read()) else {
++            output.zeroize();
++            return Err(Error::EntropyUnavailable);
++        };
++        let word = Zeroizing::new(word);
++        let bytes = Zeroizing::new(word.to_ne_bytes());
++        chunk.copy_from_slice(&bytes[..chunk.len()]);
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn seed_retry_exhaustion_wipes_partial_output() {
++        let mut calls = 0;
++        let mut output = [0xa5; 48];
++        let result = fill_entropy(&mut output, || {
++            calls += 1;
++            (calls == 1).then_some(0x123456789abcdef0)
++        });
++        assert_eq!(result, Err(Error::EntropyUnavailable));
++        assert_eq!(calls, 1025);
++        assert_eq!(output, [0; 48]);
++    }
++
++    #[test]
++    fn seed_retry_success_and_partial_word() {
++        let mut calls = 0;
++        let mut output = [0; 13];
++        fill_entropy(&mut output, || {
++            calls += 1;
++            (calls % 2 == 0).then_some(0x0102030405060708)
++        })
++        .unwrap();
++        assert_eq!(calls, 4);
++        assert_eq!(&output[..8], &0x0102030405060708u64.to_ne_bytes());
++        assert_eq!(&output[8..], &0x0102030405060708u64.to_ne_bytes()[..5]);
++    }
++}
+diff --git a/td-shim/src/lib.rs b/td-shim/src/lib.rs
+index d28439b..02cdb03 100644
+--- a/td-shim/src/lib.rs
++++ b/td-shim/src/lib.rs
+@@ -14,6 +14,9 @@ pub mod event_log;
+ pub mod fv;
+ pub mod reset_vector;
+ 
++#[cfg(feature = "symcrypt")]
++pub mod crypto;
++
+ #[cfg(feature = "secure-boot")]
+ pub mod secure_boot;
+ 
+diff --git a/td-shim/src/secure_boot.rs b/td-shim/src/secure_boot.rs
+index 9dbdb32..180e94d 100644
+--- a/td-shim/src/secure_boot.rs
++++ b/td-shim/src/secure_boot.rs
+@@ -11,13 +11,9 @@
+ use core::mem::size_of;
+ use core::ptr::slice_from_raw_parts;
+ 
+-use der::{asn1::UintRef, Encode, Sequence};
+ use r_efi::efi::Guid;
+-use ring::{
+-    digest,
+-    signature::{self, UnparsedPublicKey, VerificationAlgorithm},
+-};
+ use scroll::{Pread, Pwrite};
++use symcrypt_core::{ecc, hash::Algorithm, rsa};
+ use td_shim_interface::td_uefi_pi::{fv, pi};
+ 
+ /// GUID for secure boot trust anchor in the Configuration Firmware Volume (CFV).
+@@ -43,10 +39,6 @@ pub const CFV_FILE_HEADER_PUBKEY_GUID: Guid = Guid::from_fields(
+ pub const PUBKEY_FILE_STRUCT_VERSION_V1: u32 = 0x01;
+ pub const PUBKEY_HASH_ALGORITHM_SHA384: u64 = 1;
+ 
+-const RSA_3072_MAX_DER_PUBLIC_KEY_SIZE: usize = 396;
+-const ECDSA_3072_PUBLIC_KEY_SIZE: usize = 97;
+-const FORMATED_PUBKEY_MAX_SIZE: usize = RSA_3072_MAX_DER_PUBLIC_KEY_SIZE;
+-
+ #[repr(C, align(4))]
+ #[derive(Debug, Default, Pread, Pwrite)]
+ pub struct CfvPubKeyFileHeader {
+@@ -113,28 +105,12 @@ pub enum VerifyErr {
+     InvalidSignature,
+ }
+ 
+-// rfc3279#section-2.3.1 RSA Keys
+-// The RSA public key is encoded using the ASN.1 type RSAPublicKey:
+-//
+-// RSAPublicKey ::= SEQUENCE {
+-//     modulus            INTEGER,    -- n
+-//     publicExponent     INTEGER  }  -- e
+-//
+-#[derive(Copy, Clone, Debug, Eq, PartialEq, Sequence)]
+-struct RsaPublicKeyDer<'a> {
+-    pub modulus: UintRef<'a>,
+-    pub exponents: UintRef<'a>,
+-}
+-
+ pub struct PayloadVerifier<'a> {
+     header: PayloadSignHeader,
+     config: &'a [u8],
+     image: &'a [u8],
+     public_key: &'a [u8],
+-    formated_public_key: [u8; FORMATED_PUBKEY_MAX_SIZE],
+-    public_key_size: usize,
+     signature: &'a [u8],
+-    verify_alg: &'static dyn VerificationAlgorithm,
+ }
+ 
+ impl<'a> PayloadVerifier<'a> {
+@@ -155,9 +131,6 @@ impl<'a> PayloadVerifier<'a> {
+         // The image to be verified contains signing header and payload ELF/PE image
+         let image = &signed_payload[0..offset];
+ 
+-        let mut formated_public_key = [0u8; FORMATED_PUBKEY_MAX_SIZE];
+-        let public_key_size;
+-        let verify_alg: &'static dyn VerificationAlgorithm;
+         let signature;
+         let public_key;
+         match header.signing_algorithm {
+@@ -172,13 +145,6 @@ impl<'a> PayloadVerifier<'a> {
+ 
+                 // Signature: (R: first 48 bytes, S: second 48 byts)
+                 signature = &signed_payload[offset..offset + 96];
+-
+-                // Uncompressed public key
+-                formated_public_key[0] = 0x04;
+-                formated_public_key[1..1 + public_key.len()].copy_from_slice(public_key);
+-                public_key_size = ECDSA_3072_PUBLIC_KEY_SIZE;
+-
+-                verify_alg = &signature::ECDSA_P384_SHA384_FIXED;
+             }
+             PAYLOAD_SIGN_RSA_PSS_3072_SHA384 => {
+                 if signed_payload.len() < offset + 776 {
+@@ -188,30 +154,10 @@ impl<'a> PayloadVerifier<'a> {
+                 // Store the Mod(384 bytes)||Exponent(8 bytes) to the public_key to verify hash.
+                 public_key = &signed_payload[offset..offset + 392];
+ 
+-                // Public Mod (384 bytes)
+-                let modulus = &signed_payload[offset..offset + 384];
+-                offset += 384;
+-
+-                // Public Exponent (8 bytes)
+-                let exp = &signed_payload[offset..offset + 8];
+-                offset += 8;
++                offset += 392;
+ 
+                 // Signature (384 bytes)
+                 signature = &signed_payload[offset..offset + 384];
+-
+-                let der = RsaPublicKeyDer {
+-                    modulus: UintRef::new(modulus).map_err(|_e| VerifyErr::InvalidContent)?,
+-                    exponents: UintRef::new(exp).map_err(|_e| VerifyErr::InvalidContent)?,
+-                };
+-                let encoded = der
+-                    .encode_to_slice(&mut formated_public_key)
+-                    .map_err(|_e| VerifyErr::InvalidContent)?;
+-                if encoded.len() > RSA_3072_MAX_DER_PUBLIC_KEY_SIZE {
+-                    return Err(VerifyErr::InvalidPublicKey);
+-                }
+-                public_key_size = encoded.len();
+-
+-                verify_alg = &signature::RSA_PSS_2048_8192_SHA384;
+             }
+             _ => return Err(VerifyErr::UnknownAlgorithm),
+         }
+@@ -221,10 +167,7 @@ impl<'a> PayloadVerifier<'a> {
+             image,
+             config,
+             public_key,
+-            formated_public_key,
+-            public_key_size,
+             signature,
+-            verify_alg,
+         })
+     }
+ 
+@@ -255,13 +198,34 @@ impl<'a> PayloadVerifier<'a> {
+     }
+ 
+     fn verify_signature(&self) -> Result<(), VerifyErr> {
+-        let signature_verifier = UnparsedPublicKey::new(
+-            self.verify_alg,
+-            &self.formated_public_key[..self.public_key_size],
+-        );
+-        signature_verifier
+-            .verify(self.image, self.signature)
+-            .map_err(|_e| VerifyErr::InvalidSignature)
++        match self.header.signing_algorithm {
++            PAYLOAD_SIGN_ECDSA_NIST_P384_SHA384 => {
++                let mut public_key = [0; 97];
++                public_key[0] = 0x04;
++                public_key[1..].copy_from_slice(self.public_key);
++                ecc::Key::from_sec1_public_key(ecc::Curve::P384, &public_key)
++                    .map_err(|_| VerifyErr::InvalidPublicKey)?
++                    .verify(Algorithm::Sha384, self.image, self.signature)
++                    .map_err(|_| VerifyErr::InvalidSignature)
++            }
++            PAYLOAD_SIGN_RSA_PSS_3072_SHA384 => {
++                let mut exponent = [0; PAYLOAD_SIGN_RSA_EXPONENT_SIZE];
++                exponent.copy_from_slice(&self.public_key[PAYLOAD_SIGN_RSA_PUBLIC_KEY_MOD_SIZE..]);
++                rsa::Key::from_public_components(
++                    &self.public_key[..PAYLOAD_SIGN_RSA_PUBLIC_KEY_MOD_SIZE],
++                    u64::from_be_bytes(exponent),
++                )
++                .map_err(|_| VerifyErr::InvalidPublicKey)?
++                .verify(
++                    Algorithm::Sha384,
++                    rsa::Padding::Pss,
++                    self.image,
++                    self.signature,
++                )
++                .map_err(|_| VerifyErr::InvalidSignature)
++            }
++            _ => Err(VerifyErr::UnknownAlgorithm),
++        }
+     }
+ 
+     // Calculate the hash of public key read from signed payload, and
+@@ -289,8 +253,9 @@ impl<'a> PayloadVerifier<'a> {
+         }
+ 
+         let trusted_hash = &file[readlen..header.length as usize];
+-        let real_hash = digest::digest(&digest::SHA384, self.public_key);
+-        if real_hash.as_ref() != trusted_hash {
++        let real_hash = crate::crypto::digest_sha384(self.public_key)
++            .map_err(|_| VerifyErr::InvalidPublicKey)?;
++        if real_hash.as_slice() != trusted_hash {
+             return Err(VerifyErr::InvalidPublicKey);
+         }
+ 

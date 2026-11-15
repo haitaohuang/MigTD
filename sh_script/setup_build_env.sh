@@ -41,10 +41,10 @@ APT_PACKAGES=(
   curl wget git ca-certificates
   # C/C++ toolchain + linkers
   build-essential clang llvm lld
-  # assembler for td-shim reset vector / ring
+  # assembler for the td-shim reset vector
   nasm
   # generic build drivers
-  make pkg-config
+  make cmake binutils pkg-config
   # JSON tooling used by build_azure_mock_test.sh policy generation
   jq
   # unzip for the linux-sgx sgxssl prepare step

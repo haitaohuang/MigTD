@@ -7,19 +7,20 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
 use alloc::{string::String, vec::Vec};
 use der::asn1::{AnyRef, BitStringRef};
 use der::{Decode, Encode, Sequence, Tag, TagNumber, Tagged};
 use pki_types::{pem::PemObject, CertificateDer};
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "rustls")] {
-        pub mod rustls_impl;
-        pub use rustls_impl::ecdsa;
-        pub use rustls_impl::hash;
-        pub use rustls_impl::tls;
-    }
-}
+pub mod ecdsa;
+pub mod hash;
+#[cfg(feature = "rustls")]
+pub mod rustls_impl;
+#[cfg(feature = "rustls")]
+pub use rustls_impl::tls;
 
 pub mod crl;
 pub mod x509;
@@ -52,6 +53,7 @@ pub enum Error {
     EcdsaVerify,
 
     /// Couldn't configure the TLS contex, e.g., cipher suite, TLS protocol version.
+    #[cfg(feature = "rustls")]
     SetupTlsContext(tls::TlsLibError),
 
     /// Invalid DNS name
@@ -94,6 +96,28 @@ pub enum Error {
 impl From<x509::DerError> for Error {
     fn from(e: x509::DerError) -> Error {
         Error::GenerateCertificate(e)
+    }
+}
+
+pub fn get_random(output: &mut [u8]) -> Result<()> {
+    symcrypt_core::random::fill(output).map_err(|_| Error::GetRandom)
+}
+
+pub fn unix_time() -> Option<u64> {
+    #[cfg(feature = "AzCVMEmu")]
+    {
+        Some(1704067200)
+    }
+    #[cfg(all(not(feature = "AzCVMEmu"), target_os = "none"))]
+    {
+        u64::try_from(sys_time::get_sys_time()?).ok()
+    }
+    #[cfg(all(not(feature = "AzCVMEmu"), not(target_os = "none")))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|time| time.as_secs())
     }
 }
 

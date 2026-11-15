@@ -9,7 +9,6 @@ use core::mem::MaybeUninit;
 use core::time::Duration;
 #[cfg(not(feature = "spdm_attestation"))]
 use crypto::tls::SecureChannel;
-use ring::rand::{SecureRandom, SystemRandom};
 use tdx_tdcall::tdx::{tdcall_servtd_rebind_approve, tdcall_vm_write};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
@@ -507,9 +506,7 @@ pub fn approve_rebinding(
 
 pub fn create_rebind_token() -> Result<RebindingToken, MigrationResult> {
     let mut token = [0u8; 32];
-    let rng = SystemRandom::new();
-    rng.fill(&mut token)
-        .map_err(|_| MigrationResult::InvalidParameter)?;
+    crypto::get_random(&mut token).map_err(|_| MigrationResult::InvalidParameter)?;
 
     Ok(RebindingToken { token })
 }

@@ -6,16 +6,21 @@ edition = "2021"
 
 [dependencies]
 async_io = { path = "../async/async_io" }
-cfg-if = "1.0"
 der = {version = "0.7.9", features = ["oid", "alloc", "derive"]}
 pki-types = { package = "rustls-pki-types", version = "1" }
 rust_std_stub = { path = "../std-support/rust-std-stub" }
-rustls = { version = "0.23.20", default-features = false, features = ["ring" ], optional = true }
-ring = { path = "../../deps/td-shim/library/ring", default-features = false, features = ["alloc", "less-safe-getrandom-custom-or-rdrand"], optional = true }
+rustls = { version = "0.23.46", default-features = false, features = ["custom-provider"], optional = true }
+rustls-symcrypt = { workspace = true, optional = true }
+symcrypt-core.workspace = true
+spin = { version = "0.9.8", default-features = false, features = ["mutex", "spin_mutex"] }
 sys_time = { path = "../std-support/sys_time" }
 zeroize = "1.5.7"
 
+[target.'cfg(not(target_os = "none"))'.dependencies]
+symcrypt-core = { workspace = true, features = ["std"] }
+
 [features]
 default = ["rustls_impl"]
-rustls_impl = ["rustls", "ring"]
+rustls = ["dep:rustls", "dep:rustls-symcrypt"]
+rustls_impl = ["rustls"]
 AzCVMEmu = []

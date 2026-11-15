@@ -19,10 +19,10 @@ anyhow = { version = "1.0.68", default-features = false }
 async_io = { path = "../async/async_io" }
 async_runtime = { path = "../async/async_runtime" }
 attestation = { path = "../attestation", default-features = false, optional = true }
-cc-measurement = { path = "../../deps/td-shim/cc-measurement"}
+cc-measurement = { path = "../../deps/td-shim/cc-measurement", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 crypto = { path = "../crypto" }
-futures-util = { version = "0.3.17", default-features = false }
+futures-util = { version = "0.3.32", default-features = false }
 lazy_static = { version = "1.0", features = ["spin_no_std"] }
 log = { version = "0.4.29", features = ["kv"] }
 pci = { path="../devices/pci" }
@@ -52,7 +52,7 @@ raw-cpuid = "11.6.0"
 # AzCVMEmu optional deps (grouped)
 tdx-tdcall-emu = { path = "../../deps/td-shim-AzCVMEmu/tdx-tdcall", optional = true }
 td-payload-emu = { path = "../../deps/td-shim-AzCVMEmu/td-payload-emu", optional = true }
-td-shim = { path = "../../deps/td-shim/td-shim", default-features = false }
+td-shim = { path = "../../deps/td-shim/td-shim", default-features = false, features = ["symcrypt"] }
 td-shim-interface-emu = { path = "../../deps/td-shim-AzCVMEmu/td-shim-interface", optional = true, features = ["std"] }
 td-shim-emu = { path = "../../deps/td-shim-AzCVMEmu/td-shim", optional = true }
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread"], optional = true }
@@ -60,12 +60,12 @@ tokio = { version = "1.0", features = ["rt", "rt-multi-thread"], optional = true
 minicov = { version = "0.2", default-features = false, optional = true }
 td-benchmark = { path = "../../deps/td-shim/devtools/td-benchmark", default-features = false,  optional = true }
 
-spdmlib = {path = "../../deps/spdm-rs/spdmlib", default-features = false, features = ["spdm-ring", "chunk-cap", "mut-auth", "hashed-transcript-data"]}
+spdmlib = {path = "../../deps/spdm-rs/spdmlib", default-features = false, features = ["chunk-cap", "mut-auth", "hashed-transcript-data"]}
+spdm-crypto-symcrypt = { workspace = true, optional = true }
 codec = {path= "../../deps/spdm-rs/codec"}
 maybe-async = "0.2.7"
 async-trait = "0.1.71"
 zeroize = { version = "1.5.0", features = ["zeroize_derive"]}
-ring = { version = "0.17.14" }
 
 [features]
 default = ["virtio-vsock"]
@@ -86,7 +86,7 @@ oneshot-apic = []
 test_heap_size = ["td-benchmark", "td-payload/test_heap_size"]
 test_stack_size = ["td-benchmark"]
 test_disable_ra_and_accept_all = ["attestation/test", "tdx-tdcall-emu?/test_mock_report"] # Dangerous: test-only RA bypass; blocked in release (see src/lib.rs)
-spdm_attestation = ["main"]
+spdm_attestation = ["main", "spdm-crypto-symcrypt"]
 test_mock_report = ["AzCVMEmu", "tdx-tdcall-emu/test_mock_report"]  # Use mock TD report in AzCVMEmu mode
 igvm-attest = ["attestation/igvm-attest"]
 test-get-quote = []

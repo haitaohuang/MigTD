@@ -35,6 +35,11 @@ exclude = [
 
 resolver = "2"
 
+[workspace.dependencies]
+symcrypt-core = { git = "https://github.com/haitaohuang/rust-symcrypt-static", rev = "52a32af1703584dd0bcd688ed38cf561d470b9ef", default-features = false, features = ["encoding"] }
+rustls-symcrypt = { git = "https://github.com/haitaohuang/rust-symcrypt-static", rev = "52a32af1703584dd0bcd688ed38cf561d470b9ef", default-features = false }
+spdm-crypto-symcrypt = { git = "https://github.com/haitaohuang/rust-symcrypt-static", rev = "52a32af1703584dd0bcd688ed38cf561d470b9ef", default-features = false }
+
 # the profile used for `cargo build`
 [profile.dev]
 panic = "abort" # disable stack unwinding on panic
@@ -51,6 +56,8 @@ codegen-units = 1
 strip = true
 
 [patch.crates-io]
-ring = { path = "deps/td-shim/library/ring" }
 sys_time = { path = "src/std-support/sys_time" }
 
+[patch."https://github.com/ccc-spdm-tools/spdm-rs"]
+spdmlib = { path = "deps/spdm-rs/spdmlib" }
+codec = { path = "deps/spdm-rs/codec" }

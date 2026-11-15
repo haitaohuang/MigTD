@@ -1,0 +1,35 @@
+diff --git a/spdmlib/Cargo.toml b/spdmlib/Cargo.toml
+index 798b6229173bb35f70c99c35bfa9cc4e84af9e12..b694b9b59ea7579b0649817162580990783893ac 100644
+--- a/spdmlib/Cargo.toml
++++ b/spdmlib/Cargo.toml
+@@ -26,7 +26,7 @@ zeroize = { version = "1.5.0", features = ["zeroize_derive"]}
+ maybe-async = "0.2.7"
+ futures = { version = "0.3", default-features = false }
+ async-trait = "0.1.71"
+-spin = "0"
++spin = "0.9.8"
+ 
+ [target.'cfg(any(target_os = "uefi", target_os = "none"))'.dependencies]
+ sys_time = { path = "../sys_time" }
+@@ -45,7 +45,7 @@ env_logger = "*"
+ 
+ [features]
+ default = ["spdm-ring", "std", "hashed-transcript-data"]
+-std = ["webpki/std", "rustls-pki-types/std"]
++std = ["webpki?/std", "rustls-pki-types?/std"]
+ spdm-ring = ["ring", "webpki", "rustls-pki-types", "untrusted", "lazy_static", "spin"]
+ downcast = []
+ hashed-transcript-data = []
+diff --git a/spdmlib/src/crypto/mod.rs b/spdmlib/src/crypto/mod.rs
+index 065b276fc673851ad1e60f05a02a452f2119a04e..62babb9bbeda6d353a3399f4c73b5d6df3e8b6f9 100644
+--- a/spdmlib/src/crypto/mod.rs
++++ b/spdmlib/src/crypto/mod.rs
+@@ -228,7 +228,7 @@ pub mod asym_verify {
+     use super::spdm_ring::asym_verify_impl::DEFAULT;
+ 
+     pub fn register(context: SpdmAsymVerify) -> bool {
+-        CRYPTO_ASYM_VERIFY.try_get_or_init(|| context).is_ok()
++        CRYPTO_ASYM_VERIFY.try_init_once(|| context).is_ok()
+     }
+ 
+     pub fn verify(

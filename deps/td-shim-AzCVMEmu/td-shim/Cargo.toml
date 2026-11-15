@@ -12,5 +12,5 @@ default = ["std"]
 std = []
 
 [dependencies]
-cc-measurement = { path = "../../td-shim/cc-measurement"}
+cc-measurement = { path = "../../td-shim/cc-measurement", default-features = false }
 zerocopy = { version = "=0.8.27", features = ["derive"] }

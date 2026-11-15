@@ -16,13 +16,11 @@ timestamp: 2026-07-10T19:26:55+00:00
 bash sh_script/preparation.sh
 ```
 
-This applies the `spdm-rs` patches to the ring source selected by MigTD's
-workspace override, `deps/td-shim/library/ring`
-(`EphemeralPrivateKey::export_private_key_bytes`/`from_private_key_bytes` and
-`digest::Context::to_bytes`/`from_bytes`). See
-[`doc/dependency_preparation.md`](../../doc/dependency_preparation.md) for why
-spdm-rs's own ring copy is not selected. **Skipping preparation produces build
-errors that look like a real baseline regression but aren't.** CI runs it
+This idempotently applies the maintained td-shim and SPDM patches
+for the static SymCrypt backend without resetting submodules. See
+[`doc/dependency_preparation.md`](../../doc/dependency_preparation.md) for the
+native initialization and dependency contracts. **Skipping preparation produces
+build errors that look like a real baseline regression but aren't.** CI runs it
 automatically; **locally you must run it manually** after:
 
 - a fresh clone,
@@ -60,14 +58,20 @@ verification:
 ```
 
 Stages mirror the five workflows: **format → deny → library → main → emu**
-(after `prep`). The EMU stage includes artifact/verifier and CoRIM policy
-checks, all 20 matrix scenarios, and an additional CoRIM rebind (21 total).
-The script stops at the first failure. **Fix the root cause;
+(after `prep`). The library stage also checks the selected firmware and native
+image-tool crypto dependency closures; Intel QVL/SGXSSL is excluded from that
+Rust dependency check. It also runs the patched shim's measurement, interrupt
+state, secure-boot, and native image-tool library tests. The EMU stage includes
+artifact/verifier and CoRIM policy checks, all 20 matrix scenarios, and an
+additional CoRIM rebind (21 total). The script stops at the first failure. **Fix the root cause;
 don't skip ahead.**
 
 Generated JSON mappings use `svnMappings[].tdMeasurements.servtdInfoHash`.
 The asymmetric CoRIM fixture generator must read that field, not the legacy
 `tdinfo_hash` spelling (`sh_script/gen_asymmetric_servtd_corim_fixture.sh`).
+
+The main stage builds all 32 firmware variants and the six native tool packages
+listed in `.github/workflows/main.yml`.
 
 `cargo test` alone is **not sufficient** for changes to:
 

@@ -49,6 +49,17 @@ use crate::spdm::vmcall_msg::VMCALL_SPDM_MESSAGE_HEADER_SIZE;
 
 pub(crate) type SpdmDeviceIoArc<T> = Arc<Mutex<MigtdTransport<T>>>;
 
+pub fn init_crypto() -> SpdmResult {
+    static INITIALIZED: spin::Once<SpdmResult> = spin::Once::new();
+    *INITIALIZED.call_once(|| {
+        spdm_crypto_symcrypt::register(crypto::unix_time)?;
+        if !spdmlib::secret::asym_sign::register(spdm_rsp::SECRET_ASYM_IMPL_INSTANCE.clone()) {
+            return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+        }
+        Ok(())
+    })
+}
+
 // Borrow the whole context so the exchange can keep using it while its session
 // keys and raw application-buffer signing key are cleared on return or cancellation.
 struct AppContextGuard<'a, T> {
