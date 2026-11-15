@@ -28,10 +28,9 @@ automatically; **locally you must run it manually** after:
 - any `git submodule update`,
 - switching to a branch with different submodule SHAs.
 
-If td-shim preparation cannot reset ring to its required commit in a shallow
-checkout, fetch that exact commit into `deps/td-shim/library/ring` before
-retrying. `deps/td-shim/sh_script/preparation.sh` does not stop at the failed
-reset; subsequent cleanup/patch failures are not evidence of a source regression.
+Do not run the upstream ring preparation scripts for this backend. The root
+preparation script applies only the maintained SymCrypt patches and leaves the
+unselected ring submodules untouched.
 
 On a completely fresh checkout, `cargo fmt --check` can fail to resolve
 `deps/spdm-rs/spdmlib/src/config.rs` before its build script has generated it.
@@ -63,8 +62,8 @@ image-tool crypto dependency closures; Intel QVL/SGXSSL is excluded from that
 Rust dependency check. It also runs the patched shim's measurement, interrupt
 state, secure-boot, and native image-tool library tests. The EMU stage includes
 artifact/verifier and CoRIM policy checks, all 20 matrix scenarios, and an
-additional CoRIM rebind (21 total). The script stops at the first failure. **Fix the root cause;
-don't skip ahead.**
+additional CoRIM rebind (21 total). The script stops at the first failure.
+**Fix the root cause; don't skip ahead.**
 
 Generated JSON mappings use `svnMappings[].tdMeasurements.servtdInfoHash`.
 The asymmetric CoRIM fixture generator must read that field, not the legacy

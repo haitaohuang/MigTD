@@ -30,32 +30,15 @@ jobs:
         with:
           submodules: recursive
 
-      # Install first since it's needed to build NASM
-      - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0 # v2.0.9
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-environment
         with:
-          version: "10.0"
-          directory: ${{ runner.temp }}/llvm
-      
-      - name: Install libtinfo5
-        run: sudo apt-get update -y && sudo apt-get install libtinfo5 -y
-
-      - name: install NASM
-        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1.5.2
-
-      - name: Install toolchain with clippy available
-        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
-        with:
-          profile: minimal
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          override: true
-          components: clippy
+          rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
+          rust-components: rust-src,clippy
+          add-x86-target: 'false'
 
       - name: Install required cargo
         run: cargo install clippy-sarif sarif-fmt
-
-      - name: Preparation Work
-        run: bash sh_script/preparation.sh
 
       - name: Run rust-clippy for result collection
         run:
@@ -78,39 +61,22 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
 
-      # Install first since it's needed to build NASM
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
-
-      - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0 # v2.0.9
-        with:
-          version: "10.0"
-          directory: ${{ runner.temp }}/llvm
-      
-      - name: Install libtinfo5
-        run: sudo apt-get update -y && sudo apt-get install libtinfo5 -y
-
-      - name: install NASM
-        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1.5.2
 
       - name: Checkout sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
-      - name: Install toolchain with rustfmt available
-        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-environment
         with:
-          profile: minimal
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          override: true
-          components: rustfmt
-
-      - name: Preparation Work
-        run: bash sh_script/preparation.sh
+          rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
+          rust-components: rust-src,rustfmt
+          add-x86-target: 'false'
 
       - name: Run cargo check
         uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1.0.3

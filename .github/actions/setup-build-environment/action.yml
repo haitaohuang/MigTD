@@ -13,6 +13,10 @@ inputs:
     description: 'Rust toolchain version to install'
     required: false
     default: '1.88.0'
+  rust-components:
+    description: 'Rust components required by the calling workflow'
+    required: false
+    default: 'rust-src'
   add-x86-target:
     description: 'Whether to add x86_64-unknown-none target'
     required: false
@@ -55,7 +59,7 @@ runs:
         profile: minimal
         toolchain: ${{ inputs.rust-toolchain }}
         override: true
-        components: rust-src
+        components: ${{ inputs.rust-components }}
 
     - name: Add x86_64-unknown-none target
       if: inputs.add-x86-target == 'true'
