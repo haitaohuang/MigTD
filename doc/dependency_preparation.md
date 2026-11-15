@@ -33,8 +33,8 @@ longer patches or resets them. Intel QVL/SGXSSL remains unchanged.
 
 Builds require CMake, Clang, and binutils (`objcopy` for native guard isolation
 and the image's symbol-stripped shim copy).
-All native-building workflows, including format checks, use the shared build
-setup action's Clang 18.1.8. Clang 10 fails to compile the native backend with
+Image, library, emulation, and format jobs use the shared build setup action's
+Clang 18.1.8. Clang 10 fails to compile the native backend with
 speculative-load hardening; keep the hardening and use the shared compiler setup.
 `python3 sh_script/check_crypto_dependencies.py` checks both
 firmware protocols, shim boot profiles, and native image/signing tools. CI and
